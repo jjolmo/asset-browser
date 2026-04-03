@@ -378,12 +378,14 @@ fn check_for_updates() -> Result<UpdateInfo, String> {
     let current = env!("CARGO_PKG_VERSION");
     let url = "https://api.github.com/repos/jjolmo/asset-browser/releases/latest";
 
-    let output = std::process::Command::new("curl")
-        .args(["-sL", "-H", "Accept: application/vnd.github.v3+json", url])
-        .output()
-        .map_err(|e| e.to_string())?;
+    let body = ureq::get(url)
+        .set("Accept", "application/vnd.github.v3+json")
+        .set("User-Agent", "asset-browser")
+        .call()
+        .map_err(|e| format!("Request failed: {}", e))?
+        .into_string()
+        .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    let body = String::from_utf8_lossy(&output.stdout);
     let json: serde_json::Value = serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
