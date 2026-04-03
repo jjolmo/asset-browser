@@ -364,6 +364,121 @@ fn open_containing_folder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub has_update: bool,
+    pub download_url: String,
+    pub release_url: String,
+}
+
+#[tauri::command]
+fn check_for_updates() -> Result<UpdateInfo, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let url = "https://api.github.com/repos/jjolmo/asset-browser/releases/latest";
+
+    let output = std::process::Command::new("curl")
+        .args(["-sL", "-H", "Accept: application/vnd.github.v3+json", url])
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    let body = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    let tag = json["tag_name"].as_str().unwrap_or("v0.0.0");
+    let latest = tag.trim_start_matches('v');
+    let release_url = json["html_url"].as_str().unwrap_or("").to_string();
+
+    // Find AppImage asset for Linux, or first asset
+    let mut download_url = String::new();
+    if let Some(assets) = json["assets"].as_array() {
+        for asset in assets {
+            let name = asset["name"].as_str().unwrap_or("");
+            if name.ends_with(".AppImage") {
+                download_url = asset["browser_download_url"].as_str().unwrap_or("").to_string();
+                break;
+            }
+        }
+        if download_url.is_empty() {
+            if let Some(first) = assets.first() {
+                download_url = first["browser_download_url"].as_str().unwrap_or("").to_string();
+            }
+        }
+    }
+
+    let has_update = latest != current;
+
+    Ok(UpdateInfo {
+        current_version: current.to_string(),
+        latest_version: latest.to_string(),
+        has_update,
+        download_url,
+        release_url,
+    })
+}
+
+#[tauri::command]
+fn create_desktop_entry(app_handle: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+
+        // Resolve the actual executable path
+        let exe_path = std::env::current_exe().map_err(|e| e.to_string())?;
+        let exe_str = exe_path.to_string_lossy().to_string();
+
+        // Copy icon to ~/.local/share/icons/
+        let icons_dir = PathBuf::from(&home).join(".local/share/icons");
+        fs::create_dir_all(&icons_dir).map_err(|e| e.to_string())?;
+        let icon_dest = icons_dir.join("asset-browser.png");
+
+        // Use the bundled icon from the resource path
+        let resource_path = app_handle.path()
+            .resource_dir()
+            .map_err(|e| e.to_string())?;
+        let icon_src = resource_path.join("icons/128x128.png");
+        if icon_src.exists() {
+            fs::copy(&icon_src, &icon_dest).map_err(|e| e.to_string())?;
+        }
+
+        // Create .desktop file
+        let apps_dir = PathBuf::from(&home).join(".local/share/applications");
+        fs::create_dir_all(&apps_dir).map_err(|e| e.to_string())?;
+        let desktop_path = apps_dir.join("asset-browser.desktop");
+
+        let content = format!(
+            "[Desktop Entry]\n\
+             Type=Application\n\
+             Name=Asset Browser\n\
+             Comment=Browse and preview image assets\n\
+             Exec={exe_str}\n\
+             Icon=asset-browser\n\
+             Terminal=false\n\
+             Categories=Graphics;Development;\n\
+             StartupWMClass=asset-browser\n",
+        );
+
+        fs::write(&desktop_path, content).map_err(|e| e.to_string())?;
+
+        // Make executable
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o755);
+            fs::set_permissions(&desktop_path, perms).map_err(|e| e.to_string())?;
+        }
+
+        Ok(desktop_path.to_string_lossy().to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app_handle;
+        Err("Desktop entries are only supported on Linux".to_string())
+    }
+}
+
 // ── App Setup ──────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -387,6 +502,8 @@ pub fn run() {
             set_setting,
             get_image_dimensions,
             open_containing_folder,
+            create_desktop_entry,
+            check_for_updates,
         ])
         .setup(|app| {
             // Show main window after setup
