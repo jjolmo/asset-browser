@@ -56,6 +56,28 @@
 				<span class="item-count">{libraryStore.totalCount}</span>
 			</button>
 
+			<!-- Muted folders -->
+			{#if libraryStore.mutedFolders.size > 0}
+				<div class="sidebar-section">
+					<div class="section-header">
+						<span>Muted</span>
+					</div>
+					{#each [...libraryStore.mutedFolders] as folder}
+						<div class="muted-folder-item">
+							<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="muted-icon">
+								<path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a5 5 0 110 10A5 5 0 018 3zm3.5 4.5h-7v1h7v-1z"/>
+							</svg>
+							<span class="muted-folder-name" title={folder}>{folder.split('/').pop()}</span>
+							<button class="unmute-btn" onclick={() => libraryStore.unmuteFolder(folder)} title="Unmute">
+								<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+									<path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.708L8 8.707z"/>
+								</svg>
+							</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
 			<!-- Folder tree -->
 			<div class="sidebar-section">
 				<div class="section-header">
@@ -228,6 +250,50 @@
 		font-size: 11px;
 		color: var(--color-text-muted);
 		font-style: italic;
+	}
+
+	.muted-folder-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 12px;
+		font-size: 11px;
+		color: var(--color-text-muted);
+	}
+
+	.muted-icon {
+		flex-shrink: 0;
+		opacity: 0.5;
+	}
+
+	.muted-folder-name {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+	}
+
+	.unmute-btn {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 3px;
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		opacity: 0;
+	}
+
+	.muted-folder-item:hover .unmute-btn {
+		opacity: 1;
+	}
+
+	.unmute-btn:hover {
+		color: var(--color-text-primary);
+		background-color: var(--color-bg-hover);
 	}
 
 	.empty-state {

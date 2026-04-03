@@ -2,6 +2,12 @@ import { invoke } from '@tauri-apps/api/core';
 import type { ImageEntry, FolderNode, SortBy, SortDirection } from '$lib/types';
 
 class LibraryStore {
+	constructor() {
+		if (typeof window !== 'undefined') {
+			this.loadMutedFolders();
+		}
+	}
+
 	// State
 	rootPath = $state<string | null>(null);
 	allImages = $state<ImageEntry[]>([]);
@@ -26,6 +32,9 @@ class LibraryStore {
 	minResolution = $state<number>(0);
 	maxResolution = $state<number>(0); // 0 = no limit
 
+	// Muted folders
+	mutedFolders = $state<Set<string>>(new Set());
+
 	// Thumbnails cache
 	thumbnails = $state<Record<string, string>>({});
 
@@ -47,6 +56,14 @@ class LibraryStore {
 		} else {
 			// No folder selected — show all
 			images = this.allImages;
+		}
+
+		// Exclude muted folders (in all views except when directly viewing a muted folder)
+		if (this.mutedFolders.size > 0) {
+			const viewing = this.selectedFolder;
+			if (!viewing || !this.isFolderMuted(viewing)) {
+				images = images.filter((img) => !this.isFolderMuted(img.folder));
+			}
 		}
 
 		// Apply filter search on top
@@ -139,6 +156,38 @@ class LibraryStore {
 		if (image) {
 			this.highlightedFolder = image.folder;
 		}
+	}
+
+	// Muted folders
+	isFolderMuted(path: string): boolean {
+		for (const muted of this.mutedFolders) {
+			if (path === muted || path.startsWith(muted + '/')) return true;
+		}
+		return false;
+	}
+
+	muteFolder(path: string) {
+		this.mutedFolders = new Set([...this.mutedFolders, path]);
+		this.saveMutedFolders();
+	}
+
+	unmuteFolder(path: string) {
+		const next = new Set(this.mutedFolders);
+		next.delete(path);
+		this.mutedFolders = next;
+		this.saveMutedFolders();
+	}
+
+	private saveMutedFolders() {
+		const arr = [...this.mutedFolders];
+		try { localStorage.setItem('ab:muted_folders', JSON.stringify(arr)); } catch {}
+	}
+
+	loadMutedFolders() {
+		try {
+			const raw = localStorage.getItem('ab:muted_folders');
+			if (raw) this.mutedFolders = new Set(JSON.parse(raw));
+		} catch {}
 	}
 
 	setSort(by: SortBy) {

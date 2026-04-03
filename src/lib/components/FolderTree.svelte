@@ -1,9 +1,37 @@
 <script lang="ts">
 	import type { FolderNode } from '$lib/types';
+	import { invoke } from '@tauri-apps/api/core';
 	import { libraryStore } from '$lib/stores/library.svelte';
 	import FolderTree from './FolderTree.svelte';
 
 	let { node, depth = 0 }: { node: FolderNode; depth?: number } = $props();
+
+	let contextMenu = $state<{ x: number; y: number } | null>(null);
+	let isMuted = $derived(libraryStore.isFolderMuted(node.path));
+
+	function handleContextMenu(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		contextMenu = { x: e.clientX, y: e.clientY };
+	}
+
+	function closeContextMenu() {
+		contextMenu = null;
+	}
+
+	function openInFileManager() {
+		invoke('open_containing_folder', { path: node.path }).catch(console.error);
+		closeContextMenu();
+	}
+
+	function toggleMute() {
+		if (isMuted) {
+			libraryStore.unmuteFolder(node.path);
+		} else {
+			libraryStore.muteFolder(node.path);
+		}
+		closeContextMenu();
+	}
 
 	let expanded = $state(depth === 0);
 	let isSelected = $derived(libraryStore.selectedFolder === node.path);
@@ -35,9 +63,11 @@
 		class="tree-item"
 		class:active={isSelected}
 		class:highlighted={isHighlighted && !isSelected}
+		class:muted={isMuted}
 		style="padding-left: {8 + depth * 16}px"
 		onclick={select}
 		ondblclick={toggle}
+		oncontextmenu={handleContextMenu}
 		role="treeitem"
 	>
 		{#if node.children.length > 0}
@@ -71,6 +101,31 @@
 		</div>
 	{/if}
 </div>
+
+{#if contextMenu}
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<!-- svelte-ignore a11y_click_events_have_key_events -->
+	<div class="ctx-overlay" onclick={closeContextMenu} oncontextmenu={(e) => { e.preventDefault(); closeContextMenu(); }}>
+		<div class="ctx-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px;">
+			<button class="ctx-item" onclick={openInFileManager}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+					<path d="M14.5 3H7.71l-.85-.85L6.51 2H1.5l-.5.5v11l.5.5h13l.5-.5v-10L14.5 3zm-.51 8.49V13H2V7h5.29l.85.85.36.15H14v3.49zM2 3h4.29l.85.85.36.15H14v2H8.5l-.85-.85L7.29 5H2V3z" />
+				</svg>
+				Open folder
+			</button>
+			<button class="ctx-item" onclick={toggleMute}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+					{#if isMuted}
+						<path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 13A6 6 0 018 2v12z"/>
+					{:else}
+						<path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a5 5 0 110 10A5 5 0 018 3zm3.5 4.5h-7v1h7v-1z"/>
+					{/if}
+				</svg>
+				{isMuted ? 'Unmute folder' : 'Mute folder'}
+			</button>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.tree-node {
@@ -152,5 +207,43 @@
 
 	.tree-children {
 		/* no indent — handled by padding-left on tree-item */
+	}
+
+	.tree-item.muted {
+		opacity: 0.4;
+	}
+
+	.ctx-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+	}
+
+	.ctx-menu {
+		position: fixed;
+		background-color: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		padding: 4px 0;
+		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+		min-width: 160px;
+	}
+
+	.ctx-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 6px 12px;
+		background: none;
+		border: none;
+		color: var(--color-text-primary);
+		cursor: pointer;
+		font-size: 12px;
+		text-align: left;
+	}
+
+	.ctx-item:hover {
+		background-color: var(--color-bg-hover);
 	}
 </style>
