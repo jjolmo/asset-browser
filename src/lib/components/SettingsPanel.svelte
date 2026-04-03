@@ -116,7 +116,7 @@
 							</svg>
 							<div>
 								<h3 class="about-title">Asset Browser</h3>
-								<p class="about-version">v0.1.0</p>
+								<p class="about-version">v0.9.1</p>
 							</div>
 						</div>
 						<p class="about-desc">A fast, cross-platform asset browser for game development and pixel art.</p>
