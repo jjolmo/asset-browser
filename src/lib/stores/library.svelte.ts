@@ -126,12 +126,19 @@ class LibraryStore {
 
 	selectFolder(path: string | null) {
 		this.selectedFolder = path;
+		this.highlightedFolder = path;
 		this.selectedImage = null;
 		this.filterSearch = '';
 	}
 
+	// Folder highlighted in the tree (follows selected image, doesn't filter the view)
+	highlightedFolder = $state<string | null>(null);
+
 	selectImage(image: ImageEntry | null) {
 		this.selectedImage = image;
+		if (image) {
+			this.highlightedFolder = image.folder;
+		}
 	}
 
 	setSort(by: SortBy) {

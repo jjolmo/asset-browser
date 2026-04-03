@@ -1,9 +1,54 @@
 <script lang="ts">
+	import { invoke } from '@tauri-apps/api/core';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 
 	let { onclose }: { onclose: () => void } = $props();
 
-	let activeCategory = $state('appearance');
+	let activeCategory = $state('general');
+
+	// Desktop entry
+	let desktopStatus = $state<'idle' | 'success' | 'error'>('idle');
+	let desktopMessage = $state('');
+	const isLinux = navigator.userAgent.includes('Linux');
+
+	async function createDesktopEntry() {
+		try {
+			const path = await invoke<string>('create_desktop_entry');
+			desktopStatus = 'success';
+			desktopMessage = path;
+		} catch (e) {
+			desktopStatus = 'error';
+			desktopMessage = String(e);
+		}
+	}
+
+	// Update checker
+	let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle');
+	let updateInfo = $state<{ latest: string; current: string; url: string; download: string } | null>(null);
+	let updateError = $state('');
+
+	async function checkForUpdates() {
+		updateStatus = 'checking';
+		try {
+			const info = await invoke<{
+				current_version: string;
+				latest_version: string;
+				has_update: boolean;
+				download_url: string;
+				release_url: string;
+			}>('check_for_updates');
+			updateInfo = {
+				latest: info.latest_version,
+				current: info.current_version,
+				url: info.release_url,
+				download: info.download_url,
+			};
+			updateStatus = info.has_update ? 'available' : 'up-to-date';
+		} catch (e) {
+			updateStatus = 'error';
+			updateError = String(e);
+		}
+	}
 
 	interface Category {
 		id: string;
@@ -12,6 +57,11 @@
 	}
 
 	const categories: Category[] = [
+		{
+			id: 'general',
+			label: 'General',
+			icon: 'M9.1 4.4L8.6 2H7.4l-.5 2.4-.7.3-2-1.3-.9.8 1.3 2-.2.7-2.4.5v1.2l2.4.5.3.7-1.3 2 .8.8 2-1.3.7.3.5 2.4h1.2l.5-2.4.7-.3 2 1.3.8-.8-1.3-2 .3-.7 2.4-.5V7.4l-2.4-.5-.3-.7 1.3-2-.8-.8-2 1.3-.7-.3zM8 10a2 2 0 110-4 2 2 0 010 4z'
+		},
 		{
 			id: 'appearance',
 			label: 'Appearance',
@@ -85,7 +135,30 @@
 				{/each}
 			</nav>
 			<div class="settings-content">
-				{#if activeCategory === 'appearance'}
+				{#if activeCategory === 'general'}
+					<div class="content-page">
+						<h3 class="section-title">General</h3>
+						<p class="section-desc">General application settings.</p>
+
+						{#if isLinux}
+							<div class="setting-group">
+								<span class="setting-label">Desktop Integration</span>
+								<p class="section-desc">Create a .desktop entry so Asset Browser appears in your application menu.</p>
+								<button class="action-btn" onclick={createDesktopEntry}>
+									<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+										<path d="M14 1H2a1 1 0 00-1 1v12a1 1 0 001 1h12a1 1 0 001-1V2a1 1 0 00-1-1zM2 0h12a2 2 0 012 2v12a2 2 0 01-2 2H2a2 2 0 01-2-2V2a2 2 0 012-2zm1 4h10v1H3V4zm0 3h10v1H3V7zm0 3h7v1H3v-1z"/>
+									</svg>
+									Create .desktop entry
+								</button>
+								{#if desktopStatus === 'success'}
+									<p class="status-msg success">Created: {desktopMessage}</p>
+								{:else if desktopStatus === 'error'}
+									<p class="status-msg error">{desktopMessage}</p>
+								{/if}
+							</div>
+						{/if}
+					</div>
+				{:else if activeCategory === 'appearance'}
 					<div class="content-page">
 						<h3 class="section-title">Appearance</h3>
 						<p class="section-desc">Configure the visual appearance of the application.</p>
@@ -116,7 +189,7 @@
 							</svg>
 							<div>
 								<h3 class="about-title">Asset Browser</h3>
-								<p class="about-version">v0.9.1</p>
+								<p class="about-version">v0.9.2</p>
 							</div>
 						</div>
 						<p class="about-desc">A fast, cross-platform asset browser for game development and pixel art.</p>
@@ -125,6 +198,42 @@
 							<span class="tech-badge">SvelteKit 2</span>
 							<span class="tech-badge">Svelte 5</span>
 							<span class="tech-badge">Rust</span>
+						</div>
+
+						<div class="setting-group" style="margin-top: 16px;">
+							<h3 class="section-title">Updates</h3>
+							<button class="action-btn" onclick={checkForUpdates} disabled={updateStatus === 'checking'}>
+								<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+									<path d="M8 1a7 7 0 100 14A7 7 0 008 1zm0 13A6 6 0 118 2a6 6 0 010 12zm-1-3h2V7H7v4zm0-5h2V4H7v2z"/>
+								</svg>
+								{updateStatus === 'checking' ? 'Checking...' : 'Check for updates'}
+							</button>
+							{#if updateStatus === 'up-to-date'}
+								<p class="status-msg success">You're on the latest version ({updateInfo?.current})</p>
+							{:else if updateStatus === 'available' && updateInfo}
+								<div class="update-available">
+									<p class="status-msg" style="color: var(--color-accent);">
+										New version available: <strong>v{updateInfo.latest}</strong> (current: v{updateInfo.current})
+									</p>
+									<a class="action-btn update-link" href={updateInfo.url} target="_blank" rel="noopener">
+										<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+											<path d="M8 1L3 7h3v5h4V7h3L8 1zM1 13h14v2H1v-2z"/>
+										</svg>
+										View release
+									</a>
+								</div>
+							{:else if updateStatus === 'error'}
+								<p class="status-msg error">{updateError}</p>
+							{/if}
+						</div>
+
+						<div class="about-footer">
+							<a class="about-link" href="https://github.com/jjolmo/asset-browser" target="_blank" rel="noopener">
+								<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+									<path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+								</svg>
+								GitHub
+							</a>
 						</div>
 					</div>
 				{/if}
@@ -340,5 +449,70 @@
 		background-color: var(--color-bg-tertiary);
 		color: var(--color-text-secondary);
 		border: 1px solid var(--color-border);
+	}
+
+	/* Action button */
+	.action-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 14px;
+		margin-top: 4px;
+		background-color: var(--color-bg-tertiary);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		color: var(--color-text-primary);
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.action-btn:hover {
+		background-color: var(--color-bg-hover);
+		border-color: var(--color-accent);
+	}
+
+	.status-msg {
+		font-size: 11px;
+		margin-top: 6px;
+	}
+
+	.status-msg.success {
+		color: #4caf50;
+	}
+
+	.status-msg.error {
+		color: #f44336;
+	}
+
+	.update-available {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		margin-top: 6px;
+	}
+
+	.update-link {
+		text-decoration: none;
+		display: inline-flex;
+		width: fit-content;
+	}
+
+	.about-footer {
+		margin-top: 16px;
+		padding-top: 12px;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.about-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--color-text-secondary);
+		text-decoration: none;
+		font-size: 12px;
+	}
+
+	.about-link:hover {
+		color: var(--color-accent);
 	}
 </style>

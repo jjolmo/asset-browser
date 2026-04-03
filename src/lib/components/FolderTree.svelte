@@ -7,6 +7,18 @@
 
 	let expanded = $state(depth === 0);
 	let isSelected = $derived(libraryStore.selectedFolder === node.path);
+	let isHighlighted = $derived(libraryStore.highlightedFolder === node.path);
+
+	// Auto-expand if a descendant folder is highlighted
+	let containsHighlighted = $derived(
+		libraryStore.highlightedFolder?.startsWith(node.path + '/') ?? false
+	);
+
+	$effect(() => {
+		if (containsHighlighted && !expanded) {
+			expanded = true;
+		}
+	});
 
 	function toggle() {
 		expanded = !expanded;
@@ -22,6 +34,7 @@
 	<div
 		class="tree-item"
 		class:active={isSelected}
+		class:highlighted={isHighlighted && !isSelected}
 		style="padding-left: {8 + depth * 16}px"
 		onclick={select}
 		ondblclick={toggle}
@@ -86,6 +99,11 @@
 
 	.tree-item.active {
 		background-color: var(--color-bg-selected);
+	}
+
+	.tree-item.highlighted {
+		background-color: var(--color-bg-hover);
+		border-left: 2px solid var(--color-accent);
 	}
 
 	.expand-btn {
