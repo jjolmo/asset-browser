@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import { settingsStore } from '$lib/stores/settings.svelte';
+	import { customActionsStore } from '$lib/stores/customActions.svelte';
 
 	let { onclose }: { onclose: () => void } = $props();
 
@@ -68,6 +69,11 @@
 			icon: 'M8 1a7 7 0 100 14A7 7 0 008 1zm0 13A6 6 0 018 2v12z'
 		},
 		{
+			id: 'actions',
+			label: 'Custom Actions',
+			icon: 'M5.5 3l-.5.5v9l.5.5 6-5v-.5l-6-4.5z'
+		},
+		{
 			id: 'about',
 			label: 'About',
 			icon: 'M8 1a7 7 0 100 14A7 7 0 008 1zm0 2a5 5 0 110 10A5 5 0 018 3zm-.5 2.5h1v1h-1v-1zm0 2h1v4h-1v-4z'
@@ -98,6 +104,27 @@
 			default:
 				return 'background-color: #1a1a1a; background-image: linear-gradient(45deg, #2a2a2a 25%, transparent 25%), linear-gradient(-45deg, #2a2a2a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2a2a 75%), linear-gradient(-45deg, transparent 75%, #2a2a2a 75%); background-size: 10px 10px; background-position: 0 0, 0 5px, 5px -5px, -5px 0px;';
 		}
+	}
+
+	// Max scan depth
+	let maxScanDepth = $state(parseInt(localStorage.getItem('ab:max_scan_depth') || '100', 10));
+	function setMaxScanDepth(v: number) {
+		const clamped = Math.max(1, Math.min(100, isNaN(v) ? 100 : v));
+		maxScanDepth = clamped;
+		try { localStorage.setItem('ab:max_scan_depth', String(clamped)); } catch {}
+	}
+
+	// Custom actions editor
+	let newActionTitle = $state('');
+	let newActionCommand = $state('');
+
+	function addCustomAction() {
+		const title = newActionTitle.trim();
+		const command = newActionCommand.trim();
+		if (!title || !command) return;
+		customActionsStore.add(title, command);
+		newActionTitle = '';
+		newActionCommand = '';
 	}
 
 	function handleBackdropClick(e: MouseEvent) {
@@ -140,6 +167,20 @@
 						<h3 class="section-title">General</h3>
 						<p class="section-desc">General application settings.</p>
 
+						<div class="setting-group">
+							<span class="setting-label">Max scan depth</span>
+							<p class="section-desc">Maximum folder recursion depth when scanning a library (1–100). Prevents hangs from symlink loops. Applies on next scan.</p>
+							<input
+								type="number"
+								class="action-input"
+								style="max-width: 120px;"
+								min="1"
+								max="100"
+								value={maxScanDepth}
+								oninput={(e) => setMaxScanDepth(parseInt(e.currentTarget.value, 10))}
+							/>
+						</div>
+
 						{#if isLinux}
 							<div class="setting-group">
 								<span class="setting-label">Desktop Integration</span>
@@ -181,6 +222,63 @@
 							</div>
 						</div>
 					</div>
+				{:else if activeCategory === 'actions'}
+					<div class="content-page">
+						<h3 class="section-title">Custom Actions</h3>
+						<p class="section-desc">Define commands to run on an asset via the right-click menu. Use <code>{'{file}'}</code> for the asset path and <code>{'{dir}'}</code> for its containing folder.</p>
+
+						<div class="setting-group">
+							<span class="setting-label">Add new action</span>
+							<div class="action-form">
+								<input
+									type="text"
+									class="action-input"
+									placeholder="Title (e.g. Open in GIMP)"
+									bind:value={newActionTitle}
+								/>
+								<input
+									type="text"
+									class="action-input"
+									placeholder={'Command (e.g. gimp "{file}")'}
+									bind:value={newActionCommand}
+								/>
+								<button class="action-btn" onclick={addCustomAction} disabled={!newActionTitle.trim() || !newActionCommand.trim()}>
+									Add
+								</button>
+							</div>
+						</div>
+
+						{#if customActionsStore.actions.length > 0}
+							<div class="setting-group">
+								<span class="setting-label">Configured actions</span>
+								<ul class="actions-list">
+									{#each customActionsStore.actions as action, i (action.id)}
+										<li class="action-row">
+											<div class="action-fields">
+												<input
+													type="text"
+													class="action-input"
+													value={action.title}
+													oninput={(e) => customActionsStore.update(action.id, e.currentTarget.value, action.command)}
+												/>
+												<input
+													type="text"
+													class="action-input"
+													value={action.command}
+													oninput={(e) => customActionsStore.update(action.id, action.title, e.currentTarget.value)}
+												/>
+											</div>
+											<div class="action-controls">
+												<button class="icon-btn" title="Move up" disabled={i === 0} onclick={() => customActionsStore.move(action.id, -1)} aria-label="Move up">▲</button>
+												<button class="icon-btn" title="Move down" disabled={i === customActionsStore.actions.length - 1} onclick={() => customActionsStore.move(action.id, 1)} aria-label="Move down">▼</button>
+												<button class="icon-btn danger" title="Remove" onclick={() => customActionsStore.remove(action.id)} aria-label="Remove">✕</button>
+											</div>
+										</li>
+									{/each}
+								</ul>
+							</div>
+						{/if}
+					</div>
 				{:else if activeCategory === 'about'}
 					<div class="content-page">
 						<div class="about-header">
@@ -189,7 +287,7 @@
 							</svg>
 							<div>
 								<h3 class="about-title">Asset Browser</h3>
-								<p class="about-version">v0.9.4</p>
+								<p class="about-version">v0.10.0</p>
 							</div>
 						</div>
 						<p class="about-desc">A fast, cross-platform asset browser for game development and pixel art.</p>
@@ -407,6 +505,93 @@
 
 	.bg-label {
 		font-size: 10px;
+	}
+
+	/* Custom actions */
+	.action-form {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		margin-top: 6px;
+	}
+
+	.action-input {
+		flex: 1;
+		padding: 6px 8px;
+		background-color: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		color: var(--color-text-primary);
+		font-size: 12px;
+		font-family: inherit;
+	}
+
+	.action-input:focus {
+		outline: none;
+		border-color: var(--color-accent);
+	}
+
+	.actions-list {
+		list-style: none;
+		padding: 0;
+		margin: 6px 0 0 0;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.action-row {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+
+	.action-fields {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		flex: 1;
+	}
+
+	.action-controls {
+		display: flex;
+		gap: 2px;
+	}
+
+	.icon-btn {
+		background: none;
+		border: 1px solid var(--color-border);
+		color: var(--color-text-secondary);
+		cursor: pointer;
+		width: 24px;
+		height: 24px;
+		border-radius: 3px;
+		font-size: 10px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.icon-btn:hover:not(:disabled) {
+		background-color: var(--color-bg-hover);
+		color: var(--color-text-primary);
+	}
+
+	.icon-btn:disabled {
+		opacity: 0.3;
+		cursor: not-allowed;
+	}
+
+	.icon-btn.danger:hover:not(:disabled) {
+		color: #e06060;
+		border-color: #e06060;
+	}
+
+	code {
+		background-color: var(--color-bg-secondary);
+		padding: 1px 4px;
+		border-radius: 3px;
+		font-size: 11px;
 	}
 
 	/* About page */

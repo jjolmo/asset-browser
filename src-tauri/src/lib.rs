@@ -134,14 +134,16 @@ fn generate_thumbnail(path: &str) -> Option<String> {
 // ── Commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-fn scan_folder(path: String, state: State<'_, Arc<AppState>>) -> Result<Vec<ImageEntry>, String> {
+fn scan_folder(path: String, max_depth: Option<usize>, state: State<'_, Arc<AppState>>) -> Result<Vec<ImageEntry>, String> {
     let root = PathBuf::from(&path);
     if !root.is_dir() {
         return Err("Path is not a directory".into());
     }
 
+    let depth = max_depth.unwrap_or(100).max(1);
     let entries: Vec<ImageEntry> = WalkDir::new(&root)
         .follow_links(true)
+        .max_depth(depth)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file() && is_image_file(e.path()))
@@ -337,6 +339,35 @@ fn get_image_dimensions(path: String) -> Result<(u32, u32), String> {
 }
 
 #[tauri::command]
+fn run_custom_command(command: String, path: String) -> Result<(), String> {
+    // Replace {file} placeholder with actual path. Also support {dir} for containing folder.
+    let p = Path::new(&path);
+    let dir = p.parent().map(|d| d.to_string_lossy().to_string()).unwrap_or_default();
+    let cmd_str = command
+        .replace("{file}", &path)
+        .replace("{dir}", &dir);
+    if cmd_str.trim().is_empty() {
+        return Err("Empty command".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", &cmd_str])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&cmd_str)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn open_containing_folder(path: String) -> Result<(), String> {
     let p = Path::new(&path);
     let folder = if p.is_dir() { p } else { p.parent().unwrap_or(p) };
@@ -504,6 +535,7 @@ pub fn run() {
             set_setting,
             get_image_dimensions,
             open_containing_folder,
+            run_custom_command,
             create_desktop_entry,
             check_for_updates,
         ])
