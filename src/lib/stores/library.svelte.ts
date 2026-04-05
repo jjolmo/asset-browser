@@ -5,7 +5,16 @@ class LibraryStore {
 	constructor() {
 		if (typeof window !== 'undefined') {
 			this.loadMutedFolders();
+			try {
+				const rv = localStorage.getItem('ab:recursive_view');
+				if (rv) this.recursiveView = rv === '1';
+			} catch {}
 		}
+	}
+
+	setRecursiveView(v: boolean) {
+		this.recursiveView = v;
+		try { localStorage.setItem('ab:recursive_view', v ? '1' : '0'); } catch {}
 	}
 
 	// State
@@ -35,6 +44,9 @@ class LibraryStore {
 	// Muted folders
 	mutedFolders = $state<Set<string>>(new Set());
 
+	// Recursive view: when true, selecting a folder also shows images from its subfolders
+	recursiveView = $state<boolean>(false);
+
 	// Thumbnails cache
 	thumbnails = $state<Record<string, string>>({});
 
@@ -51,8 +63,16 @@ class LibraryStore {
 					img.folder.toLowerCase().includes(q)
 			);
 		} else if (this.selectedFolder) {
-			// Show images in selected folder (non-recursive, just that folder)
-			images = this.allImages.filter((img) => img.folder === this.selectedFolder);
+			const sel = this.selectedFolder;
+			if (this.recursiveView) {
+				// Include subfolders
+				images = this.allImages.filter(
+					(img) => img.folder === sel || img.folder.startsWith(sel + '/')
+				);
+			} else {
+				// Show images in selected folder (non-recursive, just that folder)
+				images = this.allImages.filter((img) => img.folder === sel);
+			}
 		} else {
 			// No folder selected — show all
 			images = this.allImages;
@@ -126,7 +146,9 @@ class LibraryStore {
 		this.filterSearch = '';
 		this.selectedImage = null;
 		try {
-			const images = await invoke<ImageEntry[]>('scan_folder', { path });
+			const depthRaw = localStorage.getItem('ab:max_scan_depth');
+			const maxDepth = depthRaw ? Math.max(1, Math.min(100, parseInt(depthRaw, 10) || 100)) : 100;
+			const images = await invoke<ImageEntry[]>('scan_folder', { path, maxDepth });
 			this.allImages = images;
 			this.rootPath = path;
 			this.selectedFolder = null;

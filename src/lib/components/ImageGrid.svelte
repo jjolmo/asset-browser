@@ -3,6 +3,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { libraryStore } from '$lib/stores/library.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
+	import { customActionsStore } from '$lib/stores/customActions.svelte';
 	import SearchBar from './SearchBar.svelte';
 	import type { ImageEntry, SortBy, ViewMode } from '$lib/types';
 
@@ -138,6 +139,11 @@
 		closeContextMenu();
 	}
 
+	function runCustomAction(command: string, path: string) {
+		invoke('run_custom_command', { command, path }).catch(console.error);
+		closeContextMenu();
+	}
+
 	// Breadcrumb
 	let currentPath = $derived(libraryStore.selectedFolder || libraryStore.rootPath || '');
 
@@ -243,6 +249,17 @@
 			/>
 		</div>
 		<div class="toolbar-right">
+			<button
+				class="filter-btn"
+				class:active={libraryStore.recursiveView}
+				onclick={() => libraryStore.setRecursiveView(!libraryStore.recursiveView)}
+				title="Include subfolders recursively"
+			>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+					<path d="M2 2h4v1H3v3H2V2zm12 0h-4v1h3v3h1V2zM2 14h4v-1H3v-3H2v4zm12 0h-4v-1h3v-3h1v4zM5 6h6v4H5V6z"/>
+				</svg>
+				<span>Recursive</span>
+			</button>
 			<div class="size-filter-wrapper">
 				<button
 					class="filter-btn"
@@ -504,6 +521,17 @@
 				</svg>
 				Open containing folder
 			</button>
+			{#if customActionsStore.actions.length > 0}
+				<div class="context-separator"></div>
+				{#each customActionsStore.actions as action (action.id)}
+					<button class="context-item" onclick={() => runCustomAction(action.command, contextMenu!.image.path)}>
+						<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+							<path d="M5.5 3l-.5.5v9l.5.5 6-5v-.5l-6-4.5z" />
+						</svg>
+						{action.title}
+					</button>
+				{/each}
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -989,6 +1017,12 @@
 		padding: 4px 0;
 		box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 		min-width: 180px;
+	}
+
+	.context-separator {
+		height: 1px;
+		background-color: var(--color-border);
+		margin: 4px 0;
 	}
 
 	.context-item {
