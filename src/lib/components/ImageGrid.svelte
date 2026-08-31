@@ -1,9 +1,10 @@
 <script lang="ts">
-	import { onMount, untrack } from 'svelte';
+	import { onMount } from 'svelte';
 	import { invoke } from '@tauri-apps/api/core';
 	import { libraryStore } from '$lib/stores/library.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { customActionsStore } from '$lib/stores/customActions.svelte';
+	import { thumbUrl } from '$lib/thumbUrl';
 	import SearchBar from './SearchBar.svelte';
 	import type { ImageEntry, SortBy, ViewMode } from '$lib/types';
 
@@ -18,6 +19,8 @@
 	const CELL_OVERHEAD = 44;
 	const LIST_ROW_HEIGHT = 32;
 	const CELL_EXTRA = 16; // padding(8) + border(4) + gap(4)
+	// Rows rendered above and below the viewport, so a fast flick doesn't hit blank space
+	const OVERSCAN_ROWS = 3;
 
 	let transparencyBg = $derived(settingsStore.getSetting('transparency_bg') || 'checkerboard');
 	let thumbBgStyle = $derived.by(() => {
@@ -47,9 +50,9 @@
 	let totalHeight = $derived(totalRows * rowHeight);
 
 	// Visible range
-	let firstVisibleRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - 1));
+	let firstVisibleRow = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS));
 	let lastVisibleRow = $derived(
-		Math.min(totalRows - 1, Math.ceil((scrollTop + viewHeight) / rowHeight) + 1)
+		Math.min(totalRows - 1, Math.ceil((scrollTop + viewHeight) / rowHeight) + OVERSCAN_ROWS)
 	);
 	let visibleStartIndex = $derived(viewHeight === 0 ? 0 : firstVisibleRow * cols);
 	let visibleEndIndex = $derived(
@@ -60,17 +63,6 @@
 	let offsetY = $derived(viewHeight === 0 ? 0 : firstVisibleRow * rowHeight);
 	let visibleItems = $derived(libraryStore.folderImages.slice(visibleStartIndex, visibleEndIndex));
 
-	// Load thumbnails for visible items (untrack to avoid dependency on thumbnails cache)
-	$effect(() => {
-		const items = visibleItems;
-		const paths = items.map((img) => img.path);
-		if (paths.length > 0) {
-			untrack(() => {
-				libraryStore.loadThumbnails(paths);
-			});
-		}
-	});
-
 	// Reset scroll when folder/images change
 	$effect(() => {
 		libraryStore.folderImages;
@@ -80,10 +72,18 @@
 		}
 	});
 
+	// Scroll fires far more often than once per frame; coalescing into rAF keeps the
+	// virtualization from recomputing several times for the same painted frame.
+	let scrollRaf = 0;
+
 	function handleScroll() {
-		if (!gridContainer) return;
-		scrollTop = gridContainer.scrollTop;
-		viewHeight = gridContainer.clientHeight;
+		if (!gridContainer || scrollRaf) return;
+		scrollRaf = requestAnimationFrame(() => {
+			scrollRaf = 0;
+			if (!gridContainer) return;
+			scrollTop = gridContainer.scrollTop;
+			viewHeight = gridContainer.clientHeight;
+		});
 	}
 
 	function handleWheel(e: WheelEvent) {
@@ -92,6 +92,23 @@
 			const delta = e.deltaY > 0 ? -20 : 20;
 			cellSize = Math.max(60, Math.min(400, cellSize + delta));
 			settingsStore.setSetting('cell_size', String(cellSize));
+		}
+	}
+
+	/**
+	 * Flags the thumbnail's container once the image has actually painted, so the
+	 * spinner can be taken away and the image faded in.
+	 *
+	 * Checking `complete` up front matters: an image served from the webview's
+	 * cache can finish before any load listener is attached, and relying on the
+	 * event alone left those cells spinning forever.
+	 */
+	function thumbReady(node: HTMLImageElement) {
+		const mark = () => node.parentElement?.classList.add('thumb-ready');
+		if (node.complete && node.naturalWidth > 0) {
+			mark();
+		} else {
+			node.addEventListener('load', mark, { once: true });
 		}
 	}
 
@@ -284,6 +301,7 @@
 
 		return () => {
 			ro.disconnect();
+			if (scrollRaf) cancelAnimationFrame(scrollRaf);
 			gridContainer?.removeEventListener('wheel', handleWheel);
 			window.removeEventListener('keydown', onKeyDown);
 			window.removeEventListener('keyup', onKeyUp);
@@ -529,15 +547,20 @@
 								</span>
 							{/if}
 							<div class="cell-thumb" style={thumbBgStyle}>
-								{#if libraryStore.thumbnails[image.path]}
-									<img
-										src={libraryStore.thumbnails[image.path]}
-										alt={image.name}
-									/>
-								{:else if image.extension === 'svg'}
+								{#if image.extension === 'svg'}
 									<img
 										src={'asset://localhost/' + image.path}
 										alt={image.name}
+									/>
+								{:else if !libraryStore.failedThumbs.has(image.path)}
+									<span class="thumb-spinner"></span>
+									<img
+										class="thumb-img"
+										src={thumbUrl(image)}
+										alt={image.name}
+										decoding="async"
+										use:thumbReady
+										onerror={() => libraryStore.markThumbFailed(image.path)}
 									/>
 								{:else}
 									<div class="thumb-placeholder">
@@ -580,10 +603,18 @@
 								</span>
 							{/if}
 							<span class="list-col-thumb">
-								{#if libraryStore.thumbnails[image.path]}
-									<img src={libraryStore.thumbnails[image.path]} alt="" class="list-thumb-img" />
-								{:else if image.extension === 'svg'}
+								{#if image.extension === 'svg'}
 									<img src={'asset://localhost/' + image.path} alt="" class="list-thumb-img" />
+								{:else if !libraryStore.failedThumbs.has(image.path)}
+									<span class="thumb-spinner list-spinner"></span>
+									<img
+										src={thumbUrl(image)}
+										alt=""
+										class="list-thumb-img thumb-img"
+										decoding="async"
+										use:thumbReady
+										onerror={() => libraryStore.markThumbFailed(image.path)}
+									/>
 								{:else}
 									<span class="list-ext-icon">.{image.extension}</span>
 								{/if}
@@ -813,6 +844,7 @@
 	}
 
 	.cell-thumb {
+		position: relative;
 		width: 100%;
 		aspect-ratio: 1;
 		border-radius: 3px;
@@ -897,12 +929,59 @@
 	}
 
 	.list-col-thumb {
+		position: relative;
 		width: 24px;
 		height: 24px;
 		flex-shrink: 0;
 		display: flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	/* The spinner sits behind the image and only becomes visible if the
+	   thumbnail takes a moment — a cache hit paints before the delay elapses,
+	   so browsing already-cached folders shows no flicker. */
+	.thumb-spinner {
+		position: absolute;
+		width: 16px;
+		height: 16px;
+		border: 2px solid var(--color-border, #3a3a3a);
+		border-top-color: var(--color-accent, #4a9eff);
+		border-radius: 50%;
+		opacity: 0;
+		animation: thumb-spin 0.7s linear infinite, thumb-fade 0.1s linear 0.15s forwards;
+	}
+
+	.list-spinner {
+		width: 12px;
+		height: 12px;
+		border-width: 1.5px;
+	}
+
+	.thumb-img {
+		opacity: 0;
+		transition: opacity 0.12s ease-out;
+	}
+
+	/* Once the image is painted the spinner has to go, not just be covered:
+	   thumbnails with an alpha channel (or smaller than the spinner itself)
+	   let it show straight through. */
+	.cell-thumb:global(.thumb-ready) .thumb-spinner,
+	.list-col-thumb:global(.thumb-ready) .thumb-spinner {
+		display: none;
+	}
+
+	.cell-thumb:global(.thumb-ready) .thumb-img,
+	.list-col-thumb:global(.thumb-ready) .thumb-img {
+		opacity: 1;
+	}
+
+	@keyframes thumb-spin {
+		to { transform: rotate(360deg); }
+	}
+
+	@keyframes thumb-fade {
+		to { opacity: 1; }
 	}
 
 	.list-thumb-img {
