@@ -1,1 +1,6 @@
-node_modules/\nbuild/\n.svelte-kit/\nsrc-tauri/target/\n.DS_Store\n*.swp
+node_modules/
+build/
+.svelte-kit/
+src-tauri/target/
+.DS_Store
+*.swp

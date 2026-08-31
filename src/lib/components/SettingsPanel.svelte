@@ -23,6 +23,40 @@
 		}
 	}
 
+	// Thumbnail cache
+	type ThumbCacheInfo = { files: number; bytes: number; path: string };
+	let cacheInfo = $state<ThumbCacheInfo | null>(null);
+	let cacheBusy = $state(false);
+
+	async function refreshCacheInfo() {
+		try {
+			cacheInfo = await invoke<ThumbCacheInfo>('get_thumb_cache_info');
+		} catch (e) {
+			console.error('Failed to read thumbnail cache info:', e);
+		}
+	}
+
+	async function clearThumbCache() {
+		cacheBusy = true;
+		try {
+			await invoke<number>('clear_thumb_cache');
+			await refreshCacheInfo();
+		} catch (e) {
+			console.error('Failed to clear thumbnail cache:', e);
+		} finally {
+			cacheBusy = false;
+		}
+	}
+
+	function formatBytes(bytes: number): string {
+		if (bytes < 1024) return `${bytes} B`;
+		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+	}
+
+	refreshCacheInfo();
+
 	// Update checker
 	let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle');
 	let updateInfo = $state<{ latest: string; current: string; url: string; download: string } | null>(null);
@@ -179,6 +213,35 @@
 								value={maxScanDepth}
 								oninput={(e) => setMaxScanDepth(parseInt(e.currentTarget.value, 10))}
 							/>
+						</div>
+
+						<div class="setting-group">
+							<span class="setting-label">Thumbnail cache</span>
+							<p class="section-desc">
+								Thumbnails are generated once and kept on disk, so they survive restarts.
+								Clearing them frees space; they are rebuilt as you browse.
+							</p>
+							<p class="cache-stats">
+								{#if cacheInfo}
+									<strong>{formatBytes(cacheInfo.bytes)}</strong>
+									in {cacheInfo.files.toLocaleString()} thumbnail{cacheInfo.files === 1 ? '' : 's'}
+								{:else}
+									Reading cache…
+								{/if}
+							</p>
+							{#if cacheInfo?.path}
+								<p class="cache-path" title={cacheInfo.path}>{cacheInfo.path}</p>
+							{/if}
+							<button
+								class="action-btn"
+								onclick={clearThumbCache}
+								disabled={cacheBusy || !cacheInfo || cacheInfo.files === 0}
+							>
+								<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+									<path d="M6.5 1h3l.5.5V2h3.5l.5.5v1l-.5.5H13v10.5l-.5.5h-9l-.5-.5V4h-.5L2 3.5v-1l.5-.5H6v-.5l.5-.5zM4 4v10h8V4H4zm2 2h1v6H6V6zm3 0h1v6H9V6z"/>
+								</svg>
+								{cacheBusy ? 'Clearing…' : 'Clear cache'}
+							</button>
 						</div>
 
 						{#if isLinux}
@@ -445,6 +508,22 @@
 		gap: 12px;
 	}
 
+	.cache-stats {
+		font-size: 12px;
+		color: var(--color-text-primary);
+		margin: 0 0 4px;
+	}
+
+	.cache-path {
+		font-size: 11px;
+		color: var(--color-text-muted);
+		font-family: monospace;
+		margin: 0 0 8px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
 	.section-title {
 		font-size: 14px;
 		font-weight: 600;
@@ -649,6 +728,11 @@
 		color: var(--color-text-primary);
 		font-size: 12px;
 		cursor: pointer;
+	}
+
+	.action-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 
 	.action-btn:hover {
