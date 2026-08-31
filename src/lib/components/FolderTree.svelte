@@ -8,6 +8,7 @@
 
 	let contextMenu = $state<{ x: number; y: number } | null>(null);
 	let isMuted = $derived(libraryStore.isFolderMuted(node.path));
+	let isFavorite = $derived(libraryStore.isFolderFavorite(node.path));
 
 	function handleContextMenu(e: MouseEvent) {
 		e.preventDefault();
@@ -30,6 +31,11 @@
 		} else {
 			libraryStore.muteFolder(node.path);
 		}
+		closeContextMenu();
+	}
+
+	function toggleFavorite() {
+		libraryStore.toggleFavoriteFolder(node.path);
 		closeContextMenu();
 	}
 
@@ -90,6 +96,11 @@
 			<path d="M14.5 3H7.71l-.85-.85L6.51 2H1.5l-.5.5v11l.5.5h13l.5-.5v-10L14.5 3zm-.51 8.49V13H2V7h5.29l.85.85.36.15H14v3.49zM2 3h4.29l.85.85.36.15H14v2H8.5l-.85-.85L7.29 5H2V3z" />
 		</svg>
 		<span class="folder-name">{node.name}</span>
+		{#if isFavorite}
+			<svg width="10" height="10" viewBox="0 0 16 16" fill="#f5c518" class="fav-star">
+				<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
+			</svg>
+		{/if}
 		<span class="image-count">{node.image_count}</span>
 	</div>
 
@@ -112,6 +123,12 @@
 					<path d="M14.5 3H7.71l-.85-.85L6.51 2H1.5l-.5.5v11l.5.5h13l.5-.5v-10L14.5 3zm-.51 8.49V13H2V7h5.29l.85.85.36.15H14v3.49zM2 3h4.29l.85.85.36.15H14v2H8.5l-.85-.85L7.29 5H2V3z" />
 				</svg>
 				Open folder
+			</button>
+			<button class="ctx-item" onclick={toggleFavorite}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill={isFavorite ? '#f5c518' : 'currentColor'}>
+					<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
+				</svg>
+				{isFavorite ? 'Remove from favorites' : 'Add to favorites'}
 			</button>
 			<button class="ctx-item" onclick={toggleMute}>
 				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -203,6 +220,15 @@
 		color: var(--color-text-muted);
 		font-size: 10px;
 		flex-shrink: 0;
+	}
+
+	.fav-star {
+		margin-left: auto;
+		flex-shrink: 0;
+	}
+
+	.fav-star + .image-count {
+		margin-left: 4px;
 	}
 
 	.tree-children {
