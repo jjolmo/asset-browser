@@ -59,29 +59,44 @@
 
 	// Update checker
 	let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle');
-	let updateInfo = $state<{ latest: string; current: string; url: string; download: string } | null>(null);
+	type UpdateInfo = {
+		current_version: string;
+		latest_version: string;
+		has_update: boolean;
+		download_url: string;
+		release_url: string;
+		asset_name: string;
+		can_self_apply: boolean;
+	};
+	let updateInfo = $state<UpdateInfo | null>(null);
 	let updateError = $state('');
+	let applyStatus = $state<'idle' | 'applying' | 'done' | 'error'>('idle');
+	let applyMessage = $state('');
 
 	async function checkForUpdates() {
 		updateStatus = 'checking';
+		applyStatus = 'idle';
 		try {
-			const info = await invoke<{
-				current_version: string;
-				latest_version: string;
-				has_update: boolean;
-				download_url: string;
-				release_url: string;
-			}>('check_for_updates');
-			updateInfo = {
-				latest: info.latest_version,
-				current: info.current_version,
-				url: info.release_url,
-				download: info.download_url,
-			};
+			const info = await invoke<UpdateInfo>('check_for_updates');
+			updateInfo = info;
 			updateStatus = info.has_update ? 'available' : 'up-to-date';
 		} catch (e) {
 			updateStatus = 'error';
 			updateError = String(e);
+		}
+	}
+
+	async function applyUpdate() {
+		if (!updateInfo) return;
+		applyStatus = 'applying';
+		try {
+			applyMessage = await invoke<string>('apply_update', {
+				downloadUrl: updateInfo.download_url,
+			});
+			applyStatus = 'done';
+		} catch (e) {
+			applyMessage = String(e);
+			applyStatus = 'error';
 		}
 	}
 
@@ -370,18 +385,42 @@
 								{updateStatus === 'checking' ? 'Checking...' : 'Check for updates'}
 							</button>
 							{#if updateStatus === 'up-to-date'}
-								<p class="status-msg success">You're on the latest version ({updateInfo?.current})</p>
+								<p class="status-msg success">You're on the latest version (v{updateInfo?.current_version})</p>
 							{:else if updateStatus === 'available' && updateInfo}
 								<div class="update-available">
 									<p class="status-msg" style="color: var(--color-accent);">
-										New version available: <strong>v{updateInfo.latest}</strong> (current: v{updateInfo.current})
+										New version available: <strong>v{updateInfo.latest_version}</strong>
+										(current: v{updateInfo.current_version})
 									</p>
-									<a class="action-btn update-link" href={updateInfo.url} target="_blank" rel="noopener">
+									{#if updateInfo.can_self_apply}
+										<button
+											class="action-btn"
+											onclick={applyUpdate}
+											disabled={applyStatus === 'applying' || applyStatus === 'done'}
+										>
+											<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+												<path d="M8 11L3 5h3V1h4v4h3l-5 6zM1 13h14v2H1v-2z"/>
+											</svg>
+											{#if applyStatus === 'applying'}
+												Downloading {updateInfo.asset_name}…
+											{:else if applyStatus === 'done'}
+												Installed
+											{:else}
+												Download and install
+											{/if}
+										</button>
+									{/if}
+									<a class="action-btn update-link" href={updateInfo.release_url} target="_blank" rel="noopener">
 										<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
 											<path d="M8 1L3 7h3v5h4V7h3L8 1zM1 13h14v2H1v-2z"/>
 										</svg>
 										View release
 									</a>
+									{#if applyStatus === 'done'}
+										<p class="status-msg success">{applyMessage}</p>
+									{:else if applyStatus === 'error'}
+										<p class="status-msg error">{applyMessage}</p>
+									{/if}
 								</div>
 							{:else if updateStatus === 'error'}
 								<p class="status-msg error">{updateError}</p>

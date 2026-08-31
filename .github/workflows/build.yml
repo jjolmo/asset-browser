@@ -54,4 +54,7 @@ jobs:
           releaseName: 'Asset Browser ${{ github.ref_name }}'
           releaseBody: 'See the assets for download links.'
           releaseDraft: false
-          prerelease: true
+          # Must stay false: the in-app updater reads /releases/latest, and that
+          # endpoint skips prereleases, so publishing as one hides every release
+          # from it.
+          prerelease: false
