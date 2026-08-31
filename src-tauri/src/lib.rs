@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -474,6 +474,81 @@ pub struct UpdateInfo {
     pub has_update: bool,
     pub download_url: String,
     pub release_url: String,
+    pub asset_name: String,
+    /// Whether this build can replace itself in place (an AppImage can).
+    pub can_self_apply: bool,
+}
+
+/// True when `latest` is a higher version than `current`.
+///
+/// A plain string comparison was used before, which reports an update whenever
+/// the tag merely *differs* — including when the release is older than the
+/// build in hand.
+fn is_newer(current: &str, latest: &str) -> bool {
+    let parse = |s: &str| -> (u32, u32, u32) {
+        let s = s.trim_start_matches('v');
+        let parts: Vec<&str> = s.split('.').collect();
+        (
+            parts.first().and_then(|p| p.parse().ok()).unwrap_or(0),
+            parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0),
+            parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0),
+        )
+    };
+    parse(latest) > parse(current)
+}
+
+/// Substrings every candidate asset name has to contain for this platform.
+///
+/// The bundler's names are not consistent between formats, so both the format
+/// and the architecture have to be pinned. Picking "the first asset" instead —
+/// as this used to — hands a Linux user an `.rpm` or a macOS user a `.msi`
+/// depending only on how GitHub happened to order the list.
+fn target_asset_patterns() -> Vec<&'static str> {
+    #[cfg(target_os = "linux")]
+    {
+        #[cfg(target_arch = "x86_64")]
+        return vec!["amd64", ".appimage"];
+        #[cfg(target_arch = "aarch64")]
+        return vec!["aarch64", ".appimage"];
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return vec![".msi"];
+    }
+    #[cfg(target_os = "macos")]
+    {
+        #[cfg(target_arch = "x86_64")]
+        return vec!["x64", ".dmg"];
+        #[cfg(target_arch = "aarch64")]
+        return vec!["aarch64", ".dmg"];
+    }
+}
+
+/// The release asset built for this platform, if the release carries one.
+///
+/// Deliberately strict: no loose fallback. Offering an asset this platform
+/// cannot install is worse than reporting that none was found, because the
+/// user only discovers it after the download.
+fn find_asset(assets: &[serde_json::Value]) -> Option<(String, String)> {
+    let patterns = target_asset_patterns();
+    assets.iter().find_map(|asset| {
+        let name = asset["name"].as_str()?;
+        let lower = name.to_lowercase();
+        patterns
+            .iter()
+            .all(|p| lower.contains(p))
+            .then(|| {
+                (
+                    name.to_string(),
+                    asset["browser_download_url"].as_str().unwrap_or("").to_string(),
+                )
+            })
+    })
+}
+
+/// The AppImage this process was launched from, when there is one.
+fn running_appimage() -> Option<PathBuf> {
+    std::env::var("APPIMAGE").ok().map(PathBuf::from)
 }
 
 #[tauri::command]
@@ -496,32 +571,64 @@ fn check_for_updates() -> Result<UpdateInfo, String> {
     let latest = tag.trim_start_matches('v');
     let release_url = json["html_url"].as_str().unwrap_or("").to_string();
 
-    // Find AppImage asset for Linux, or first asset
-    let mut download_url = String::new();
-    if let Some(assets) = json["assets"].as_array() {
-        for asset in assets {
-            let name = asset["name"].as_str().unwrap_or("");
-            if name.ends_with(".AppImage") {
-                download_url = asset["browser_download_url"].as_str().unwrap_or("").to_string();
-                break;
-            }
-        }
-        if download_url.is_empty() {
-            if let Some(first) = assets.first() {
-                download_url = first["browser_download_url"].as_str().unwrap_or("").to_string();
-            }
-        }
-    }
-
-    let has_update = latest != current;
+    let (asset_name, download_url) = json["assets"]
+        .as_array()
+        .and_then(|assets| find_asset(assets))
+        .unwrap_or_else(|| (String::new(), release_url.clone()));
 
     Ok(UpdateInfo {
         current_version: current.to_string(),
         latest_version: latest.to_string(),
-        has_update,
+        has_update: is_newer(current, latest),
         download_url,
         release_url,
+        can_self_apply: running_appimage().is_some() && !asset_name.is_empty(),
+        asset_name,
     })
+}
+
+/// Download the release asset and put it in place of the running AppImage.
+///
+/// Written to a sibling temporary file first and moved into place with a
+/// rename, so an interrupted download can never leave a half-written
+/// executable where the app used to be.
+#[tauri::command]
+fn apply_update(download_url: String) -> Result<String, String> {
+    let appimage = running_appimage()
+        .ok_or_else(|| "This build cannot update itself; download the release manually.".to_string())?;
+
+    let mut bytes = Vec::new();
+    ureq::get(&download_url)
+        .set("User-Agent", "asset-browser")
+        .call()
+        .map_err(|e| format!("Download failed: {}", e))?
+        .into_reader()
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read download: {}", e))?;
+
+    if bytes.len() < 1024 * 1024 {
+        return Err(format!(
+            "Downloaded file is only {} bytes, which is too small to be the app",
+            bytes.len()
+        ));
+    }
+
+    let tmp = appimage.with_extension("new");
+    fs::write(&tmp, &bytes).map_err(|e| format!("Failed to write update: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755))
+            .map_err(|e| format!("Failed to set permissions: {}", e))?;
+    }
+
+    fs::rename(&tmp, &appimage).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("Failed to replace the AppImage: {}", e)
+    })?;
+
+    Ok("Update installed. Restart Asset Browser to use it.".to_string())
 }
 
 #[tauri::command]
@@ -654,6 +761,7 @@ pub fn run() {
             run_custom_command,
             create_desktop_entry,
             check_for_updates,
+            apply_update,
         ])
         .setup(|app| {
             if let Ok(cache_dir) = app.path().app_cache_dir() {
