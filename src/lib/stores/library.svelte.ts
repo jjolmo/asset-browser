@@ -5,6 +5,7 @@ class LibraryStore {
 	constructor() {
 		if (typeof window !== 'undefined') {
 			this.loadMutedFolders();
+			this.loadFavorites();
 			try {
 				const rv = localStorage.getItem('ab:recursive_view');
 				if (rv) this.recursiveView = rv === '1';
@@ -43,6 +44,10 @@ class LibraryStore {
 
 	// Muted folders
 	mutedFolders = $state<Set<string>>(new Set());
+
+	// Favorites
+	favoriteFolders = $state<Set<string>>(new Set());
+	favoriteFiles = $state<Set<string>>(new Set());
 
 	// Recursive view: when true, selecting a folder also shows images from its subfolders
 	recursiveView = $state<boolean>(false);
@@ -180,6 +185,27 @@ class LibraryStore {
 		}
 	}
 
+	/**
+	 * Move the selection through the images currently on screen.
+	 * Returns the index of the newly selected image, or -1 when there is nothing to select.
+	 */
+	selectRelative(delta: number): number {
+		const images = this.folderImages;
+		if (images.length === 0) return -1;
+
+		const current = this.selectedImage;
+		const index = current ? images.findIndex((img) => img.path === current.path) : -1;
+		const next =
+			index === -1
+				? delta > 0
+					? 0
+					: images.length - 1
+				: Math.min(images.length - 1, Math.max(0, index + delta));
+
+		this.selectImage(images[next]);
+		return next;
+	}
+
 	// Muted folders
 	isFolderMuted(path: string): boolean {
 		for (const muted of this.mutedFolders) {
@@ -209,6 +235,61 @@ class LibraryStore {
 		try {
 			const raw = localStorage.getItem('ab:muted_folders');
 			if (raw) this.mutedFolders = new Set(JSON.parse(raw));
+		} catch {}
+	}
+
+	// Favorites
+	isFolderFavorite(path: string): boolean {
+		return this.favoriteFolders.has(path);
+	}
+
+	isFileFavorite(path: string): boolean {
+		return this.favoriteFiles.has(path);
+	}
+
+	toggleFavoriteFolder(path: string) {
+		const next = new Set(this.favoriteFolders);
+		if (next.has(path)) next.delete(path);
+		else next.add(path);
+		this.favoriteFolders = next;
+		this.saveFavorites();
+	}
+
+	toggleFavoriteFile(path: string) {
+		const next = new Set(this.favoriteFiles);
+		if (next.has(path)) next.delete(path);
+		else next.add(path);
+		this.favoriteFiles = next;
+		this.saveFavorites();
+	}
+
+	removeFavoriteFolder(path: string) {
+		const next = new Set(this.favoriteFolders);
+		next.delete(path);
+		this.favoriteFolders = next;
+		this.saveFavorites();
+	}
+
+	removeFavoriteFile(path: string) {
+		const next = new Set(this.favoriteFiles);
+		next.delete(path);
+		this.favoriteFiles = next;
+		this.saveFavorites();
+	}
+
+	private saveFavorites() {
+		try {
+			localStorage.setItem('ab:favorite_folders', JSON.stringify([...this.favoriteFolders]));
+			localStorage.setItem('ab:favorite_files', JSON.stringify([...this.favoriteFiles]));
+		} catch {}
+	}
+
+	loadFavorites() {
+		try {
+			const rawFolders = localStorage.getItem('ab:favorite_folders');
+			if (rawFolders) this.favoriteFolders = new Set(JSON.parse(rawFolders));
+			const rawFiles = localStorage.getItem('ab:favorite_files');
+			if (rawFiles) this.favoriteFiles = new Set(JSON.parse(rawFiles));
 		} catch {}
 	}
 

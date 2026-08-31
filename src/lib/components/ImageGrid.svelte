@@ -144,6 +144,61 @@
 		closeContextMenu();
 	}
 
+	function toggleFileFavorite(path: string) {
+		libraryStore.toggleFavoriteFile(path);
+		closeContextMenu();
+	}
+
+	// Track Ctrl key to show favorite stars
+	let ctrlDown = $state(false);
+
+	function onKeyDown(e: KeyboardEvent) {
+		if (e.key === 'Control') ctrlDown = true;
+
+		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+		// Don't steal the arrows from text fields, the context menu or the settings dialog
+		if (isTypingTarget(e.target)) return;
+		if (contextMenu || document.querySelector('.settings-overlay')) return;
+
+		e.preventDefault();
+		navigateImages(e.key === 'ArrowRight' ? 1 : -1);
+	}
+
+	function isTypingTarget(target: EventTarget | null): boolean {
+		const el = target as HTMLElement | null;
+		if (!el || !el.tagName) return false;
+		const tag = el.tagName;
+		return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+	}
+
+	// The grid is virtualized, so scrollIntoView() is not an option: compute the row instead
+	function scrollIndexIntoView(index: number) {
+		if (!gridContainer) return;
+		const top = Math.floor(index / Math.max(1, cols)) * rowHeight;
+		const bottom = top + rowHeight;
+		if (top < gridContainer.scrollTop) {
+			gridContainer.scrollTop = top;
+		} else if (bottom > gridContainer.scrollTop + gridContainer.clientHeight) {
+			gridContainer.scrollTop = bottom - gridContainer.clientHeight;
+		}
+	}
+
+	function navigateImages(delta: number) {
+		const index = libraryStore.selectRelative(delta);
+		if (index >= 0) scrollIndexIntoView(index);
+	}
+	function onKeyUp(e: KeyboardEvent) {
+		if (e.key === 'Control') ctrlDown = false;
+	}
+	function onBlur() { ctrlDown = false; }
+
+	function handleStarClick(e: MouseEvent, image: ImageEntry) {
+		e.preventDefault();
+		e.stopPropagation();
+		libraryStore.toggleFavoriteFile(image.path);
+	}
+
 	// Breadcrumb
 	let currentPath = $derived(libraryStore.selectedFolder || libraryStore.rootPath || '');
 
@@ -200,6 +255,9 @@
 	}
 
 	onMount(() => {
+		window.addEventListener('keydown', onKeyDown);
+		window.addEventListener('keyup', onKeyUp);
+		window.addEventListener('blur', onBlur);
 		const savedCellSize = settingsStore.getSetting('cell_size');
 		if (savedCellSize) {
 			const s = parseInt(savedCellSize, 10);
@@ -227,6 +285,9 @@
 		return () => {
 			ro.disconnect();
 			gridContainer?.removeEventListener('wheel', handleWheel);
+			window.removeEventListener('keydown', onKeyDown);
+			window.removeEventListener('keyup', onKeyUp);
+			window.removeEventListener('blur', onBlur);
 		};
 	});
 </script>
@@ -452,6 +513,21 @@
 							onclick={() => handleImageClick(image)}
 							oncontextmenu={(e) => handleContextMenu(e, image)}
 						>
+							{#if ctrlDown || libraryStore.isFileFavorite(image.path)}
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<span
+									class="fav-star-btn"
+									class:active={libraryStore.isFileFavorite(image.path)}
+									onclick={(e) => handleStarClick(e, image)}
+									oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+									title={libraryStore.isFileFavorite(image.path) ? 'Remove from favorites' : 'Add to favorites'}
+								>
+									<svg width="16" height="16" viewBox="0 0 16 16">
+										<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
+									</svg>
+								</span>
+							{/if}
 							<div class="cell-thumb" style={thumbBgStyle}>
 								{#if libraryStore.thumbnails[image.path]}
 									<img
@@ -488,6 +564,21 @@
 							onclick={() => handleImageClick(image)}
 							oncontextmenu={(e) => handleContextMenu(e, image)}
 						>
+							{#if ctrlDown || libraryStore.isFileFavorite(image.path)}
+								<!-- svelte-ignore a11y_click_events_have_key_events -->
+								<!-- svelte-ignore a11y_no_static_element_interactions -->
+								<span
+									class="fav-star-btn list-star"
+									class:active={libraryStore.isFileFavorite(image.path)}
+									onclick={(e) => handleStarClick(e, image)}
+									oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+									title={libraryStore.isFileFavorite(image.path) ? 'Remove from favorites' : 'Add to favorites'}
+								>
+									<svg width="14" height="14" viewBox="0 0 16 16">
+										<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
+									</svg>
+								</span>
+							{/if}
 							<span class="list-col-thumb">
 								{#if libraryStore.thumbnails[image.path]}
 									<img src={libraryStore.thumbnails[image.path]} alt="" class="list-thumb-img" />
@@ -515,6 +606,13 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	<div class="context-overlay" onclick={closeContextMenu} oncontextmenu={(e) => { e.preventDefault(); closeContextMenu(); }}>
 		<div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px;">
+			<button class="context-item" onclick={() => toggleFileFavorite(contextMenu!.image.path)}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill={libraryStore.isFileFavorite(contextMenu!.image.path) ? '#f5c518' : 'currentColor'}>
+					<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
+				</svg>
+				{libraryStore.isFileFavorite(contextMenu!.image.path) ? 'Remove from favorites' : 'Add to favorites'}
+			</button>
+			<div class="context-separator"></div>
 			<button class="context-item" onclick={() => openContainingFolder(contextMenu!.image.path)}>
 				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
 					<path d="M14.5 3H7.71l-.85-.85L6.51 2H1.5l-.5.5v11l.5.5h13l.5-.5v-10L14.5 3zm-.51 8.49V13H2V7h5.29l.85.85.36.15H14v3.49zM2 3h4.29l.85.85.36.15H14v2H8.5l-.85-.85L7.29 5H2V3z" />
@@ -667,6 +765,42 @@
 		transition: border-color 0.1s;
 		text-align: left;
 		color: var(--color-text-primary);
+		position: relative;
+	}
+
+	.fav-star-btn {
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 2px;
+		border-radius: 3px;
+		background-color: rgba(0, 0, 0, 0.5);
+		color: rgba(255, 255, 255, 0.5);
+		cursor: pointer;
+		transition: color 0.1s, background-color 0.1s;
+	}
+
+	.fav-star-btn svg {
+		fill: currentColor;
+	}
+
+	.fav-star-btn:hover {
+		color: #f5c518;
+		background-color: rgba(0, 0, 0, 0.7);
+	}
+
+	.fav-star-btn.active {
+		color: #f5c518;
+	}
+
+	.fav-star-btn.list-star {
+		position: static;
+		background: none;
+		margin: 0 4px 0 8px;
 	}
 
 	.grid-cell:hover {

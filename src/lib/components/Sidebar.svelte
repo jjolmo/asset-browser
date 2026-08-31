@@ -1,10 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { open } from '@tauri-apps/plugin-dialog';
+	import { invoke } from '@tauri-apps/api/core';
 	import { libraryStore } from '$lib/stores/library.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import SearchBar from './SearchBar.svelte';
 	import FolderTree from './FolderTree.svelte';
+
+	function selectFavFolder(path: string) {
+		libraryStore.selectFolder(path);
+	}
+
+	function selectFavFile(path: string) {
+		const img = libraryStore.allImages.find((i) => i.path === path);
+		if (img) libraryStore.selectImage(img);
+		else invoke('open_containing_folder', { path }).catch(console.error);
+	}
+
+	function basename(p: string): string {
+		const i = p.lastIndexOf('/');
+		return i >= 0 ? p.slice(i + 1) : p;
+	}
 
 	async function handleOpenFolder() {
 		const selected = await open({ directory: true, multiple: false });
@@ -55,6 +71,47 @@
 				<span>All Assets</span>
 				<span class="item-count">{libraryStore.totalCount}</span>
 			</button>
+
+			<!-- Favorites -->
+			{#if libraryStore.favoriteFolders.size > 0 || libraryStore.favoriteFiles.size > 0}
+				<div class="sidebar-section">
+					<div class="section-header">
+						<span>Favorites</span>
+					</div>
+					{#each [...libraryStore.favoriteFolders] as folder (folder)}
+						<div class="fav-item" title={folder}>
+							<svg width="12" height="12" viewBox="0 0 16 16" fill="#f5c518" class="fav-icon">
+								<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
+							</svg>
+							<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="fav-kind-icon">
+								<path d="M14.5 3H7.71l-.85-.85L6.51 2H1.5l-.5.5v11l.5.5h13l.5-.5v-10L14.5 3zm-.51 8.49V13H2V7h5.29l.85.85.36.15H14v3.49zM2 3h4.29l.85.85.36.15H14v2H8.5l-.85-.85L7.29 5H2V3z" />
+							</svg>
+							<button class="fav-name" onclick={() => selectFavFolder(folder)}>{basename(folder)}</button>
+							<button class="fav-remove" onclick={() => libraryStore.removeFavoriteFolder(folder)} title="Remove from favorites">
+								<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+									<path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.708L8 8.707z"/>
+								</svg>
+							</button>
+						</div>
+					{/each}
+					{#each [...libraryStore.favoriteFiles] as file (file)}
+						<div class="fav-item" title={file}>
+							<svg width="12" height="12" viewBox="0 0 16 16" fill="#f5c518" class="fav-icon">
+								<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
+							</svg>
+							<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" class="fav-kind-icon">
+								<path d="M13.5 5h-3V1h-8l-.5.5v13l.5.5h11l.5-.5v-9L13.5 5zM3 14V2h6v4h4v8H3z"/>
+							</svg>
+							<button class="fav-name" onclick={() => selectFavFile(file)}>{basename(file)}</button>
+							<button class="fav-remove" onclick={() => libraryStore.removeFavoriteFile(file)} title="Remove from favorites">
+								<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+									<path d="M8 8.707l3.646 3.647.708-.707L8.707 8l3.647-3.646-.707-.708L8 7.293 4.354 3.646l-.708.708L7.293 8l-3.647 3.646.708.708L8 8.707z"/>
+								</svg>
+							</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
 
 			<!-- Muted folders -->
 			{#if libraryStore.mutedFolders.size > 0}
@@ -292,6 +349,64 @@
 	}
 
 	.unmute-btn:hover {
+		color: var(--color-text-primary);
+		background-color: var(--color-bg-hover);
+	}
+
+	.fav-item {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 12px;
+		font-size: 12px;
+		color: var(--color-text-primary);
+	}
+
+	.fav-item:hover {
+		background-color: var(--color-bg-hover);
+	}
+
+	.fav-icon, .fav-kind-icon {
+		flex-shrink: 0;
+	}
+
+	.fav-kind-icon {
+		opacity: 0.7;
+	}
+
+	.fav-name {
+		flex: 1;
+		background: none;
+		border: none;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+		padding: 0;
+		font-size: 12px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		min-width: 0;
+	}
+
+	.fav-remove {
+		background: none;
+		border: none;
+		color: var(--color-text-muted);
+		cursor: pointer;
+		padding: 2px;
+		border-radius: 3px;
+		display: flex;
+		align-items: center;
+		flex-shrink: 0;
+		opacity: 0;
+	}
+
+	.fav-item:hover .fav-remove {
+		opacity: 1;
+	}
+
+	.fav-remove:hover {
 		color: var(--color-text-primary);
 		background-color: var(--color-bg-hover);
 	}
