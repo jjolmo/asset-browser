@@ -96,20 +96,29 @@
 	}
 
 	/**
-	 * Flags the thumbnail's container once the image has actually painted, so the
-	 * spinner can be taken away and the image faded in.
+	 * Records on the container whether the thumbnail painted or failed, which
+	 * drives the spinner, the image and the extension placeholder from CSS.
 	 *
-	 * Checking `complete` up front matters: an image served from the webview's
-	 * cache can finish before any load listener is attached, and relying on the
-	 * event alone left those cells spinning forever.
+	 * Deliberately per-element rather than a set of failed paths in the store.
+	 * A failure is not necessarily about the file: a request aborted mid-scroll
+	 * fails too, and remembering that for the session left a perfectly good
+	 * thumbnail showing a placeholder until the next rescan. Keeping the state on
+	 * the element means scrolling back simply tries again.
+	 *
+	 * Checking `complete` up front matters as well: an image served from the
+	 * webview's cache can finish before any listener is attached, and relying on
+	 * the events alone left those cells spinning forever.
 	 */
-	function thumbReady(node: HTMLImageElement) {
-		const mark = () => node.parentElement?.classList.add('thumb-ready');
-		if (node.complete && node.naturalWidth > 0) {
-			mark();
-		} else {
-			node.addEventListener('load', mark, { once: true });
+	function thumbState(node: HTMLImageElement) {
+		const settle = (ok: boolean) =>
+			node.parentElement?.classList.add(ok ? 'thumb-ready' : 'thumb-failed');
+
+		if (node.complete) {
+			settle(node.naturalWidth > 0);
+			return;
 		}
+		node.addEventListener('load', () => settle(true), { once: true });
+		node.addEventListener('error', () => settle(false), { once: true });
 	}
 
 	function handleImageClick(image: ImageEntry) {
@@ -552,20 +561,18 @@
 										src={'asset://localhost/' + image.path}
 										alt={image.name}
 									/>
-								{:else if !libraryStore.failedThumbs.has(image.path)}
+								{:else}
+									<div class="thumb-placeholder">
+										<span class="ext-label">.{image.extension}</span>
+									</div>
 									<span class="thumb-spinner"></span>
 									<img
 										class="thumb-img"
 										src={thumbUrl(image)}
 										alt={image.name}
 										decoding="async"
-										use:thumbReady
-										onerror={() => libraryStore.markThumbFailed(image.path)}
+										use:thumbState
 									/>
-								{:else}
-									<div class="thumb-placeholder">
-										<span class="ext-label">.{image.extension}</span>
-									</div>
 								{/if}
 							</div>
 							<div class="cell-info">
@@ -605,18 +612,16 @@
 							<span class="list-col-thumb">
 								{#if image.extension === 'svg'}
 									<img src={'asset://localhost/' + image.path} alt="" class="list-thumb-img" />
-								{:else if !libraryStore.failedThumbs.has(image.path)}
+								{:else}
+									<span class="list-ext-icon thumb-placeholder">.{image.extension}</span>
 									<span class="thumb-spinner list-spinner"></span>
 									<img
 										src={thumbUrl(image)}
 										alt=""
 										class="list-thumb-img thumb-img"
 										decoding="async"
-										use:thumbReady
-										onerror={() => libraryStore.markThumbFailed(image.path)}
+										use:thumbState
 									/>
-								{:else}
-									<span class="list-ext-icon">.{image.extension}</span>
 								{/if}
 							</span>
 							<span class="list-col-name" title={image.name}>{image.name}</span>
@@ -863,7 +868,6 @@
 	}
 
 	.thumb-placeholder {
-		display: flex;
 		align-items: center;
 		justify-content: center;
 		width: 100%;
@@ -963,11 +967,29 @@
 		transition: opacity 0.12s ease-out;
 	}
 
+	/* The placeholder waits behind the image and only surfaces if the thumbnail
+	   never arrives, so nothing has to be remembered between mounts. */
+	.thumb-placeholder,
+	.list-ext-icon {
+		display: none;
+		position: absolute;
+	}
+
+	.cell-thumb:global(.thumb-failed) .thumb-placeholder {
+		display: flex;
+	}
+
+	.list-col-thumb:global(.thumb-failed) .list-ext-icon {
+		display: inline;
+	}
+
 	/* Once the image is painted the spinner has to go, not just be covered:
 	   thumbnails with an alpha channel (or smaller than the spinner itself)
 	   let it show straight through. */
 	.cell-thumb:global(.thumb-ready) .thumb-spinner,
-	.list-col-thumb:global(.thumb-ready) .thumb-spinner {
+	.cell-thumb:global(.thumb-failed) .thumb-spinner,
+	.list-col-thumb:global(.thumb-ready) .thumb-spinner,
+	.list-col-thumb:global(.thumb-failed) .thumb-spinner {
 		display: none;
 	}
 
