@@ -271,6 +271,13 @@ class LibraryStore {
 		this.saveFavorites();
 	}
 
+	/** Marks a file as favorite. Already-favorite files are left alone. */
+	addFavoriteFile(path: string) {
+		if (this.favoriteFiles.has(path)) return;
+		this.favoriteFiles = new Set([...this.favoriteFiles, path]);
+		this.saveFavorites();
+	}
+
 	removeFavoriteFile(path: string) {
 		const next = new Set(this.favoriteFiles);
 		next.delete(path);

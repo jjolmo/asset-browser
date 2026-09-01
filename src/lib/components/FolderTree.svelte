@@ -43,13 +43,25 @@
 	let isSelected = $derived(libraryStore.selectedFolder === node.path);
 	let isHighlighted = $derived(libraryStore.highlightedFolder === node.path);
 
-	// Auto-expand if a descendant folder is highlighted
-	let containsHighlighted = $derived(
-		libraryStore.highlightedFolder?.startsWith(node.path + '/') ?? false
-	);
+	// Plain variable, not $state: the effect below both reads and writes it, and
+	// it must not become one of that effect's own dependencies.
+	let reactedTo: string | null = null;
 
+	/**
+	 * Open this branch when the highlight *moves* into it.
+	 *
+	 * Reacting to the change rather than holding "expanded" as an invariant is
+	 * the point: keeping it open for as long as a descendant was highlighted
+	 * made the branch impossible to fold, because collapsing it sprang it back
+	 * open on the same frame. Now a fold sticks until a newly selected image
+	 * lands somewhere underneath.
+	 */
 	$effect(() => {
-		if (containsHighlighted && !expanded) {
+		const highlighted = libraryStore.highlightedFolder;
+		if (highlighted === reactedTo) return;
+		reactedTo = highlighted;
+
+		if (highlighted?.startsWith(node.path + '/')) {
 			expanded = true;
 		}
 	});
@@ -59,6 +71,12 @@
 	}
 
 	function select() {
+		// Clicking the folder already being viewed has nothing left to select,
+		// so let it fold the branch instead of doing nothing at all.
+		if (isSelected) {
+			toggle();
+			return;
+		}
 		libraryStore.selectFolder(node.path);
 	}
 </script>
@@ -173,9 +191,18 @@
 		background-color: var(--color-bg-selected);
 	}
 
+	/* The folder the selected image lives in. Its previous colour was
+	   --color-bg-hover, which is the very colour every row takes on hover, so
+	   the mark was invisible in practice. The inset shadow draws the accent bar
+	   without a border, which would shift the row's contents by two pixels. */
 	.tree-item.highlighted {
-		background-color: var(--color-bg-hover);
-		border-left: 2px solid var(--color-accent);
+		background-color: color-mix(in srgb, var(--color-accent) 22%, transparent);
+		box-shadow: inset 2px 0 0 var(--color-accent);
+	}
+
+	.tree-item.highlighted .folder-name {
+		color: var(--color-text-primary);
+		font-weight: 600;
 	}
 
 	.expand-btn {
