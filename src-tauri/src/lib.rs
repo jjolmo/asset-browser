@@ -185,7 +185,14 @@ fn encode_thumbnail(path: &Path) -> Option<Thumb> {
 /// The URL carries the source path together with its mtime and size, so an
 /// edited file lands on a different cache key and is regenerated on its own.
 fn resolve_thumb(thumb_dir: &Path, segment: &str) -> Option<Thumb> {
-    let (mtime_size, b64_path) = segment.rsplit_once('_')?;
+    // Split from the left, not the right: mtime and size are digits and hold no
+    // separator, but base64url spends '_' as its 63rd character, so splitting on
+    // the last one lands inside the encoded path whenever it happens to contain
+    // it. Paths with non-ASCII names hit that about one time in nine.
+    let mut parts = segment.splitn(3, '_');
+    let _mtime = parts.next()?;
+    let _size = parts.next()?;
+    let b64_path = parts.next()?;
     let source = String::from_utf8(URL_SAFE_NO_PAD.decode(b64_path).ok()?).ok()?;
 
     let key = format!("{:016x}", fnv1a64(segment.as_bytes()));
@@ -204,13 +211,18 @@ fn resolve_thumb(thumb_dir: &Path, segment: &str) -> Option<Thumb> {
             mime: "image/png",
         });
     }
-    let _ = mtime_size;
-
     let thumb = encode_thumbnail(Path::new(&source))?;
     let dest = if thumb.mime == "image/png" { png } else { jpg };
-    // A failed write only costs us the cache hit next time, so it is not fatal.
+
+    // Written to a uniquely named temporary file and moved into place, because
+    // the same thumbnail can be requested twice at once while scrolling and two
+    // writers sharing one path would interleave into a corrupt file that then
+    // stays in the cache. A failed write only costs the next cache hit.
     let _ = fs::create_dir_all(thumb_dir);
-    let _ = fs::write(&dest, &thumb.bytes);
+    let tmp = dest.with_extension(format!("tmp{}", std::process::id()));
+    if fs::write(&tmp, &thumb.bytes).is_ok() && fs::rename(&tmp, &dest).is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
     Some(thumb)
 }
 

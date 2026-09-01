@@ -52,12 +52,6 @@ class LibraryStore {
 	// Recursive view: when true, selecting a folder also shows images from its subfolders
 	recursiveView = $state<boolean>(false);
 
-	// Paths whose thumbnail could not be produced, so the grid can fall back to
-	// the extension placeholder. There is no thumbnail cache here on purpose:
-	// the disk cache behind thumb:// is the only one, and the webview owns the
-	// decoded images.
-	failedThumbs = $state<Set<string>>(new Set());
-
 	// Derived: images for current folder.
 	// This is a cached $derived, not a getter: it is read on every scroll frame
 	// (through visibleItems), and re-running the filter+sort pipeline there made
@@ -157,7 +151,6 @@ class LibraryStore {
 		this.globalSearch = '';
 		this.filterSearch = '';
 		this.selectedImage = null;
-		this.failedThumbs = new Set();
 		try {
 			const depthRaw = localStorage.getItem('ab:max_scan_depth');
 			const maxDepth = depthRaw ? Math.max(1, Math.min(100, parseInt(depthRaw, 10) || 100)) : 100;
@@ -185,11 +178,6 @@ class LibraryStore {
 
 	// Folder highlighted in the tree (follows selected image, doesn't filter the view)
 	highlightedFolder = $state<string | null>(null);
-
-	markThumbFailed(path: string) {
-		if (this.failedThumbs.has(path)) return;
-		this.failedThumbs = new Set([...this.failedThumbs, path]);
-	}
 
 	selectImage(image: ImageEntry | null) {
 		this.selectedImage = image;
