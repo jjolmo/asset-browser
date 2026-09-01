@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicoverbruggen/tauri-v2-schemas/refs/heads/main/src/tauri.conf.schema.json",
   "productName": "Asset Browser",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "identifier": "com.assetbrowser.app",
   "build": {
     "frontendDist": "../build",

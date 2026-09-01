@@ -181,14 +181,32 @@
 	function onKeyDown(e: KeyboardEvent) {
 		if (e.key === 'Control') ctrlDown = true;
 
-		if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+		const handled = e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ';
+		if (!handled) return;
 		if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
-		// Don't steal the arrows from text fields, the context menu or the settings dialog
+		// Don't steal these from text fields, the context menu or the settings dialog
 		if (isTypingTarget(e.target)) return;
 		if (contextMenu || document.querySelector('.settings-overlay')) return;
 
+		// Space would otherwise scroll the grid, and press whichever cell button
+		// happens to hold focus.
 		e.preventDefault();
-		navigateImages(e.key === 'ArrowRight' ? 1 : -1);
+
+		if (e.key === ' ') {
+			favoriteSelected();
+		} else {
+			navigateImages(e.key === 'ArrowRight' ? 1 : -1);
+		}
+	}
+
+	/**
+	 * Adds the selected image to favorites. Deliberately one-way: holding space
+	 * while walking a folder with the arrows should never take a favorite back
+	 * off, and an accidental second press must not undo the first.
+	 */
+	function favoriteSelected() {
+		const image = libraryStore.selectedImage;
+		if (image) libraryStore.addFavoriteFile(image.path);
 	}
 
 	function isTypingTarget(target: EventTarget | null): boolean {
