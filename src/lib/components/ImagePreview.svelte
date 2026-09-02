@@ -4,6 +4,13 @@
 	import { libraryStore } from '$lib/stores/library.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 
+	// The settings cache is reactive, so this needs no local copy to stay in sync.
+	let metaCollapsed = $derived(settingsStore.getSetting('meta_collapsed') === '1');
+
+	function toggleMeta() {
+		settingsStore.setSetting('meta_collapsed', metaCollapsed ? '0' : '1');
+	}
+
 	let previewSrc = $state<string | null>(null);
 	let dimensions = $state<{ w: number; h: number } | null>(null);
 	let loading = $state(false);
@@ -185,7 +192,25 @@
 		</div>
 
 		<div class="preview-meta">
-			<h3 class="meta-filename" title={image.name}>{image.name}</h3>
+			<button
+				class="meta-header"
+				onclick={toggleMeta}
+				title={metaCollapsed ? 'Show details' : 'Hide details'}
+				aria-expanded={!metaCollapsed}
+			>
+				<svg
+					width="10"
+					height="10"
+					viewBox="0 0 16 16"
+					fill="currentColor"
+					class="meta-chevron"
+					class:open={!metaCollapsed}
+				>
+					<path d="M6 4l4 4-4 4V4z" />
+				</svg>
+				<span class="meta-filename" title={image.name}>{image.name}</span>
+			</button>
+			{#if !metaCollapsed}
 			<div class="meta-grid">
 				<span class="meta-label">Type</span>
 				<span class="meta-value">{image.extension.toUpperCase()}</span>
@@ -204,6 +229,7 @@
 				<span class="meta-label">Path</span>
 				<span class="meta-value meta-path" title={image.path}>{image.path}</span>
 			</div>
+			{/if}
 		</div>
 	{:else}
 		<div class="no-selection">
@@ -291,14 +317,46 @@
 		max-height: 40%;
 	}
 
+	/* The header stays put when the details fold away: collapsing the panel
+	   entirely would leave nothing to click to bring it back. */
+	.meta-header {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 0;
+		background: none;
+		border: none;
+		cursor: pointer;
+		text-align: left;
+		color: inherit;
+	}
+
+	.meta-chevron {
+		flex-shrink: 0;
+		color: var(--color-text-muted);
+		transition: transform 0.12s ease-out;
+	}
+
+	.meta-chevron.open {
+		transform: rotate(90deg);
+	}
+
+	.meta-header:hover .meta-chevron {
+		color: var(--color-text-primary);
+	}
+
 	.meta-filename {
 		font-size: 13px;
 		font-weight: 600;
 		color: var(--color-text-primary);
-		margin-bottom: 10px;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.meta-grid {
+		margin-top: 10px;
 	}
 
 	.meta-grid {

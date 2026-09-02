@@ -66,6 +66,18 @@
 		}
 	});
 
+	let itemEl: HTMLDivElement | undefined = $state();
+
+	/**
+	 * Keep the selected folder on screen. Walking the tree with the arrow keys is
+	 * useless if the row you land on sits outside the sidebar's scroll. 'nearest'
+	 * leaves an already-visible row exactly where it is, so clicking around never
+	 * makes the sidebar jump.
+	 */
+	$effect(() => {
+		if (isSelected) itemEl?.scrollIntoView({ block: 'nearest' });
+	});
+
 	function toggle() {
 		expanded = !expanded;
 	}
@@ -84,6 +96,7 @@
 <div class="tree-node">
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
+		bind:this={itemEl}
 		class="tree-item"
 		class:active={isSelected}
 		class:highlighted={isHighlighted && !isSelected}
