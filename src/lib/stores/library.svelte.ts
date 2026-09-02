@@ -179,6 +179,48 @@ class LibraryStore {
 	// Folder highlighted in the tree (follows selected image, doesn't filter the view)
 	highlightedFolder = $state<string | null>(null);
 
+	/**
+	 * Every folder path in the order the sidebar lists them: depth-first, a node
+	 * before its children. Collapsed branches are included — selecting one makes
+	 * the tree reveal it, so keyboard navigation is never blocked by a fold.
+	 */
+	folderOrder: string[] = $derived.by(() => {
+		const order: string[] = [];
+		const walk = (node: FolderNode) => {
+			order.push(node.path);
+			for (const child of node.children) walk(child);
+		};
+		if (this.folderTree) walk(this.folderTree);
+		return order;
+	});
+
+	/**
+	 * Move the selection to the folder before or after the current one.
+	 * Returns the folder that ended up selected, or null if there are none.
+	 */
+	selectFolderRelative(delta: number): string | null {
+		const order = this.folderOrder;
+		if (order.length === 0) return null;
+
+		const index = this.selectedFolder ? order.indexOf(this.selectedFolder) : -1;
+		const next =
+			index === -1
+				? delta > 0
+					? 0
+					: order.length - 1
+				: Math.min(order.length - 1, Math.max(0, index + delta));
+
+		this.selectFolder(order[next]);
+
+		// Land on the folder's first image rather than an empty selection.
+		// Stepping through folders with the keyboard is a browsing move, so the
+		// preview should follow along instead of going blank at every step.
+		const first = this.folderImages[0];
+		if (first) this.selectImage(first);
+
+		return order[next];
+	}
+
 	selectImage(image: ImageEntry | null) {
 		this.selectedImage = image;
 		if (image) {

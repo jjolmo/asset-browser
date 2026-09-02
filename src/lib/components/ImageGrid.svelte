@@ -181,21 +181,32 @@
 	function onKeyDown(e: KeyboardEvent) {
 		if (e.key === 'Control') ctrlDown = true;
 
-		const handled = e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ';
+		const handled =
+			e.key === 'ArrowLeft' ||
+			e.key === 'ArrowRight' ||
+			e.key === 'ArrowUp' ||
+			e.key === 'ArrowDown' ||
+			e.key === ' ';
 		if (!handled) return;
 		if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
 		// Don't steal these from text fields, the context menu or the settings dialog
 		if (isTypingTarget(e.target)) return;
 		if (contextMenu || document.querySelector('.settings-overlay')) return;
 
-		// Space would otherwise scroll the grid, and press whichever cell button
-		// happens to hold focus.
+		// Without this the arrows scroll the grid and space presses whichever
+		// cell button happens to hold focus.
 		e.preventDefault();
 
-		if (e.key === ' ') {
-			favoriteSelected();
-		} else {
-			navigateImages(e.key === 'ArrowRight' ? 1 : -1);
+		switch (e.key) {
+			case ' ':
+				favoriteSelected();
+				break;
+			case 'ArrowUp':
+			case 'ArrowDown':
+				libraryStore.selectFolderRelative(e.key === 'ArrowDown' ? 1 : -1);
+				break;
+			default:
+				navigateImages(e.key === 'ArrowRight' ? 1 : -1);
 		}
 	}
 
