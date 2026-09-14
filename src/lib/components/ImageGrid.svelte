@@ -5,8 +5,10 @@
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { customActionsStore } from '$lib/stores/customActions.svelte';
 	import { selectionStore } from '$lib/stores/selection.svelte';
+	import { viewerStore } from '$lib/stores/viewer.svelte';
 	import { dragLabel, startFileDrag } from '$lib/dragOut';
 	import { thumbUrl } from '$lib/thumbUrl';
+	import { previewBackground } from '$lib/backgrounds';
 	import SearchBar from './SearchBar.svelte';
 	import type { ImageEntry, SortBy, ViewMode } from '$lib/types';
 
@@ -24,17 +26,7 @@
 	// Rows rendered above and below the viewport, so a fast flick doesn't hit blank space
 	const OVERSCAN_ROWS = 3;
 
-	let transparencyBg = $derived(settingsStore.getSetting('transparency_bg') || 'checkerboard');
-	let thumbBgStyle = $derived.by(() => {
-		switch (transparencyBg) {
-			case 'black': return 'background-color: #000;';
-			case 'white': return 'background-color: #fff;';
-			case 'dark': return 'background-color: #1a1a1a;';
-			case 'checkerboard':
-			default:
-				return 'background-color: #1a1a1a; background-image: linear-gradient(45deg, #2a2a2a 25%, transparent 25%), linear-gradient(-45deg, #2a2a2a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2a2a 75%), linear-gradient(-45deg, transparent 75%, #2a2a2a 75%); background-size: 10px 10px; background-position: 0 0, 0 5px, 5px -5px, -5px 0px;';
-		}
-	});
+	let thumbBgStyle = $derived(previewBackground(10));
 
 	// Computed layout
 	let cols = $derived(
@@ -134,6 +126,18 @@
 			selectionStore.toggle(image);
 		}
 		libraryStore.selectImage(image);
+	}
+
+	/**
+	 * Opens the maximized viewer on the image that was double-clicked. The two
+	 * clicks that precede it have already selected it, and the viewer draws
+	 * whatever is selected, so there is nothing to hand over.
+	 */
+	function handleImageDblClick(e: MouseEvent) {
+		// A ctrl+double-click is someone picking files quickly, not asking for
+		// the viewer: the two clicks have already added and removed the image.
+		if (e.ctrlKey || e.metaKey) return;
+		if (libraryStore.selectedImage) viewerStore.open();
 	}
 
 	/**
@@ -639,6 +643,7 @@
 							draggable="true"
 							ondragstart={(e) => handleDragStart(e, image)}
 							onclick={(e) => handleImageClick(e, image)}
+							ondblclick={(e) => handleImageDblClick(e)}
 							oncontextmenu={(e) => handleContextMenu(e, image)}
 						>
 							{#if selectionStore.has(image.path)}
@@ -705,6 +710,7 @@
 							draggable="true"
 							ondragstart={(e) => handleDragStart(e, image)}
 							onclick={(e) => handleImageClick(e, image)}
+							ondblclick={(e) => handleImageDblClick(e)}
 							oncontextmenu={(e) => handleContextMenu(e, image)}
 						>
 							{#if ctrlDown || libraryStore.isFileFavorite(image.path)}

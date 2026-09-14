@@ -6,6 +6,7 @@
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { dragLabel, startFileDrag } from '$lib/dragOut';
 	import { thumbUrl } from '$lib/thumbUrl';
+	import { previewBackground } from '$lib/backgrounds';
 	import type { ImageEntry } from '$lib/types';
 
 	interface TransferFailure {
@@ -21,17 +22,7 @@
 	let status = $state<{ text: string; kind: 'ok' | 'error' } | null>(null);
 	let busy = $state(false);
 
-	let transparencyBg = $derived(settingsStore.getSetting('transparency_bg') || 'checkerboard');
-	let thumbBgStyle = $derived.by(() => {
-		switch (transparencyBg) {
-			case 'black': return 'background-color: #000;';
-			case 'white': return 'background-color: #fff;';
-			case 'dark': return 'background-color: #1a1a1a;';
-			case 'checkerboard':
-			default:
-				return 'background-color: #1a1a1a; background-image: linear-gradient(45deg, #2a2a2a 25%, transparent 25%), linear-gradient(-45deg, #2a2a2a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2a2a 75%), linear-gradient(-45deg, transparent 75%, #2a2a2a 75%); background-size: 8px 8px; background-position: 0 0, 0 4px, 4px -4px, -4px 0px;';
-		}
-	});
+	let thumbBgStyle = $derived(previewBackground(8));
 
 	/** The folder each file sits in, shortened against the library root. */
 	function shortFolder(image: ImageEntry): string {
