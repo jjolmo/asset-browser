@@ -834,6 +834,22 @@ fn encode_uri_path(path: &str) -> String {
 #[cfg(target_os = "linux")]
 const GNOME_COPIED_FILES: &str = "x-special/gnome-copied-files";
 
+/// Re-encodes an image as PNG, for pasting into whatever wants pixels.
+/// Returns `None` for anything the decoder cannot read, such as SVG.
+#[cfg(target_os = "linux")]
+fn render_png(path: &Path) -> Option<Vec<u8>> {
+    let img = image::ImageReader::open(path)
+        .ok()?
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    let mut bytes = Vec::new();
+    img.write_to(&mut Cursor::new(&mut bytes), image::ImageFormat::Png)
+        .ok()?;
+    Some(bytes)
+}
+
 /// Puts files on the clipboard so a file manager pastes the files themselves,
 /// not their paths as text.
 ///
@@ -841,6 +857,12 @@ const GNOME_COPIED_FILES: &str = "x-special/gnome-copied-files";
 /// app answers the paste request while it is running. Three targets go out —
 /// the GNOME one Nautilus/Nemo/Thunar prefer, the generic `text/uri-list`, and
 /// plain text as a last resort for editors and terminals.
+///
+/// A single image also goes out as `image/png`, because "paste" means two
+/// different things depending on where it lands: a file manager wants the file,
+/// while a browser, a chat window or an image editor wants the pixels. The PNG
+/// is only rendered if something actually asks for it, so the common case of
+/// pasting into a file manager never pays for the decode.
 #[tauri::command]
 fn copy_files_to_clipboard(paths: Vec<String>, app: tauri::AppHandle) -> Result<(), String> {
     if paths.is_empty() {
@@ -854,6 +876,12 @@ fn copy_files_to_clipboard(paths: Vec<String>, app: tauri::AppHandle) -> Result<
             .map(|p| format!("file://{}", encode_uri_path(p)))
             .collect();
         let text = paths.join("\n");
+        // Pixels only make sense for one image; a pile of them is a file list.
+        let single = if paths.len() == 1 {
+            Some(PathBuf::from(&paths[0]))
+        } else {
+            None
+        };
 
         // GTK is main-thread only, and a command runs off it.
         let (tx, rx) = std::sync::mpsc::channel();
@@ -861,11 +889,21 @@ fn copy_files_to_clipboard(paths: Vec<String>, app: tauri::AppHandle) -> Result<
             let outcome = (|| -> Result<(), String> {
                 let display = gtk::gdk::Display::default().ok_or("no display")?;
                 let clipboard = gtk::Clipboard::default(&display).ok_or("no clipboard")?;
-                let targets = [
+                let mut targets = vec![
                     gtk::TargetEntry::new(GNOME_COPIED_FILES, gtk::TargetFlags::empty(), 0),
                     gtk::TargetEntry::new("text/uri-list", gtk::TargetFlags::empty(), 1),
                     gtk::TargetEntry::new("UTF8_STRING", gtk::TargetFlags::empty(), 2),
                 ];
+                if single.is_some() {
+                    // Listed first: an app that understands both should take the
+                    // pixels, since anything else already had its own target.
+                    targets.insert(0, gtk::TargetEntry::new("image/png", gtk::TargetFlags::empty(), 3));
+                }
+
+                // Decoded at most once, and only if a paste asks for it. Serving
+                // runs on the main thread, so a second request must not re-decode.
+                let png: std::cell::RefCell<Option<Option<Vec<u8>>>> =
+                    std::cell::RefCell::new(None);
 
                 let accepted = clipboard.set_with_data(&targets, move |_, selection, info| {
                     match info {
@@ -880,6 +918,15 @@ fn copy_files_to_clipboard(paths: Vec<String>, app: tauri::AppHandle) -> Result<
                         1 => {
                             let refs: Vec<&str> = uris.iter().map(|s| s.as_str()).collect();
                             selection.set_uris(&refs);
+                        }
+                        3 => {
+                            let mut cached = png.borrow_mut();
+                            if cached.is_none() {
+                                *cached = Some(single.as_deref().and_then(render_png));
+                            }
+                            if let Some(Some(bytes)) = cached.as_ref() {
+                                selection.set(&gtk::gdk::Atom::intern("image/png"), 8, bytes);
+                            }
                         }
                         _ => {
                             selection.set_text(&text);
