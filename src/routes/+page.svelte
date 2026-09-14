@@ -5,13 +5,61 @@
 	import ImageGrid from '$lib/components/ImageGrid.svelte';
 	import ImagePreview from '$lib/components/ImagePreview.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
+	import SelectionPanel from '$lib/components/SelectionPanel.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
+	import { selectionStore } from '$lib/stores/selection.svelte';
 
 	let sidebarWidth = $state(240);
 	let previewWidth = $state(280);
+	let selectionWidth = $state(220);
 	let isDraggingLeft = $state(false);
 	let isDraggingRight = $state(false);
+	let isDraggingSelection = $state(false);
 	let showSettings = $state(false);
+	let windowWidth = $state(1400);
+
+	// The grid is the point of the window, so it is the one thing that always
+	// keeps room. Side panels are fixed-width and don't shrink on their own,
+	// which once let a wide preview squeeze the grid to nothing with no way
+	// back except dragging the handle blind.
+	const MIN_CENTER = 240;
+	const PANEL_MIN = { sidebar: 150, preview: 200, selection: 160 };
+
+	let showSelection = $derived(selectionStore.count > 0);
+
+	/** The widest a panel may be dragged right now, given what else is on screen. */
+	function maxWidth(panel: 'sidebar' | 'preview' | 'selection'): number {
+		const others =
+			(panel === 'sidebar' ? 0 : sidebarWidth) +
+			(panel === 'preview' ? 0 : previewWidth) +
+			(panel === 'selection' || !showSelection ? 0 : selectionWidth);
+		return Math.max(PANEL_MIN[panel], windowWidth - MIN_CENTER - others);
+	}
+
+	/**
+	 * Widths as actually rendered. Dragging is already capped, so this only has
+	 * to catch the window getting narrower: panels give way from the right,
+	 * each down to its own minimum, before the grid gives up anything.
+	 */
+	let laidOut = $derived.by(() => {
+		const widths = {
+			sidebar: sidebarWidth,
+			preview: previewWidth,
+			selection: showSelection ? selectionWidth : 0
+		};
+
+		let overflow = widths.sidebar + widths.preview + widths.selection + MIN_CENTER - windowWidth;
+		for (const panel of ['selection', 'preview', 'sidebar'] as const) {
+			if (overflow <= 0) break;
+			if (widths[panel] === 0) continue;
+			const give = Math.min(overflow, widths[panel] - PANEL_MIN[panel]);
+			if (give > 0) {
+				widths[panel] -= give;
+				overflow -= give;
+			}
+		}
+		return widths;
+	});
 
 	onMount(() => {
 		const savedSidebar = settingsStore.getSetting('sidebar_width');
@@ -24,6 +72,11 @@
 			const w = parseInt(savedPreview, 10);
 			if (w >= 200 && w <= 1200) previewWidth = w;
 		}
+		const savedSelection = settingsStore.getSetting('selection_width');
+		if (savedSelection) {
+			const w = parseInt(savedSelection, 10);
+			if (w >= 160 && w <= 600) selectionWidth = w;
+		}
 	});
 
 	function startResizeLeft(e: MouseEvent) {
@@ -33,7 +86,10 @@
 		const startWidth = sidebarWidth;
 
 		function onMove(e: MouseEvent) {
-			sidebarWidth = Math.max(150, Math.min(500, startWidth + (e.clientX - startX)));
+			sidebarWidth = Math.max(
+				PANEL_MIN.sidebar,
+				Math.min(500, maxWidth('sidebar'), startWidth + (e.clientX - startX))
+			);
 		}
 
 		function onUp() {
@@ -54,7 +110,10 @@
 		const startWidth = previewWidth;
 
 		function onMove(e: MouseEvent) {
-			previewWidth = Math.max(200, Math.min(1200, startWidth - (e.clientX - startX)));
+			previewWidth = Math.max(
+				PANEL_MIN.preview,
+				Math.min(1200, maxWidth('preview'), startWidth - (e.clientX - startX))
+			);
 		}
 
 		function onUp() {
@@ -67,12 +126,38 @@
 		window.addEventListener('mousemove', onMove);
 		window.addEventListener('mouseup', onUp);
 	}
+
+	function startResizeSelection(e: MouseEvent) {
+		e.preventDefault();
+		isDraggingSelection = true;
+		const startX = e.clientX;
+		const startWidth = selectionWidth;
+
+		function onMove(e: MouseEvent) {
+			selectionWidth = Math.max(
+				PANEL_MIN.selection,
+				Math.min(600, maxWidth('selection'), startWidth - (e.clientX - startX))
+			);
+		}
+
+		function onUp() {
+			isDraggingSelection = false;
+			window.removeEventListener('mousemove', onMove);
+			window.removeEventListener('mouseup', onUp);
+			settingsStore.setSetting('selection_width', String(selectionWidth));
+		}
+
+		window.addEventListener('mousemove', onMove);
+		window.addEventListener('mouseup', onUp);
+	}
 </script>
+
+<svelte:window bind:innerWidth={windowWidth} />
 
 <div class="app-layout">
 	<div class="app-main">
 		<!-- Left: Sidebar with folder tree -->
-		<div class="panel-left" style="width: {sidebarWidth}px; min-width: 150px; max-width: 500px; flex-shrink: 0;">
+		<div class="panel-left" style="width: {laidOut.sidebar}px; flex-shrink: 0;">
 			<Sidebar />
 			<div class="sidebar-footer">
 				<button class="settings-btn" onclick={() => showSettings = true} title="Settings">
@@ -105,9 +190,23 @@
 		></div>
 
 		<!-- Right: Image preview -->
-		<div class="panel-right" style="width: {previewWidth}px; min-width: 200px; max-width: 1200px; flex-shrink: 0;">
+		<div class="panel-right" style="width: {laidOut.preview}px; flex-shrink: 0;">
 			<ImagePreview />
 		</div>
+
+		<!-- Far right: the hand-picked selection. Appears only once something is
+		     in it, so the layout is untouched until the pile is actually used. -->
+		{#if showSelection}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				class="resize-handle"
+				class:active={isDraggingSelection}
+				onmousedown={startResizeSelection}
+			></div>
+			<div class="panel-right" style="width: {laidOut.selection}px; flex-shrink: 0;">
+				<SelectionPanel />
+			</div>
+		{/if}
 	</div>
 </div>
 
