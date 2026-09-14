@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { invoke } from '@tauri-apps/api/core';
 	import { settingsStore } from '$lib/stores/settings.svelte';
+	import {
+		backgroundFor,
+		DEFAULT_PREVIEW_COLOR,
+		DEFAULT_VIEWER_COLOR,
+		viewerColor
+	} from '$lib/backgrounds';
 	import { customActionsStore } from '$lib/stores/customActions.svelte';
 
 	let { onclose }: { onclose: () => void } = $props();
@@ -131,10 +137,25 @@
 
 	// Appearance settings
 	let transparencyBg = $state(settingsStore.getSetting('transparency_bg') || 'checkerboard');
+	let previewBgColor = $state(settingsStore.getSetting('preview_bg_color') || DEFAULT_PREVIEW_COLOR);
+	let viewerBgColor = $state(settingsStore.getSetting('viewer_bg_color') || DEFAULT_VIEWER_COLOR);
 
 	function setTransparencyBg(value: string) {
 		transparencyBg = value;
 		settingsStore.setSetting('transparency_bg', value);
+	}
+
+	function setPreviewBgColor(value: string) {
+		previewBgColor = value;
+		settingsStore.setSetting('preview_bg_color', value);
+		// Picking a colour is the whole point of picking a colour, so it also
+		// switches to the solid mode rather than being saved and ignored.
+		setTransparencyBg('color');
+	}
+
+	function setViewerBgColor(value: string) {
+		viewerBgColor = value;
+		settingsStore.setSetting('viewer_bg_color', value);
 	}
 
 	const bgOptions = [
@@ -142,18 +163,8 @@
 		{ value: 'black', label: 'Black' },
 		{ value: 'white', label: 'White' },
 		{ value: 'dark', label: 'Dark gray' },
+		{ value: 'color', label: 'Custom' },
 	] as const;
-
-	function getBgPreviewStyle(value: string): string {
-		switch (value) {
-			case 'black': return 'background-color: #000;';
-			case 'white': return 'background-color: #fff;';
-			case 'dark': return 'background-color: #1a1a1a;';
-			case 'checkerboard':
-			default:
-				return 'background-color: #1a1a1a; background-image: linear-gradient(45deg, #2a2a2a 25%, transparent 25%), linear-gradient(-45deg, #2a2a2a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2a2a 75%), linear-gradient(-45deg, transparent 75%, #2a2a2a 75%); background-size: 10px 10px; background-position: 0 0, 0 5px, 5px -5px, -5px 0px;';
-		}
-	}
 
 	// Max scan depth
 	let maxScanDepth = $state(parseInt(localStorage.getItem('ab:max_scan_depth') || '100', 10));
@@ -283,7 +294,7 @@
 						<p class="section-desc">Configure the visual appearance of the application.</p>
 
 						<div class="setting-group">
-							<label class="setting-label">Transparency background</label>
+							<span class="setting-label">Transparency background</span>
 							<p class="setting-desc">Background shown behind images with transparency</p>
 							<div class="bg-options">
 								{#each bgOptions as opt}
@@ -293,11 +304,45 @@
 										onclick={() => setTransparencyBg(opt.value)}
 										title={opt.label}
 									>
-										<div class="bg-preview" style={getBgPreviewStyle(opt.value)}></div>
+										<div class="bg-preview" style={backgroundFor(opt.value, 10)}></div>
 										<span class="bg-label">{opt.label}</span>
 									</button>
 								{/each}
 							</div>
+
+							<label class="color-row">
+								<input
+									type="color"
+									class="color-input"
+									value={previewBgColor}
+									oninput={(e) => setPreviewBgColor(e.currentTarget.value)}
+								/>
+								<span class="color-text">
+									Custom colour
+									<span class="color-hint">used when Custom is selected above</span>
+								</span>
+							</label>
+						</div>
+
+						<div class="setting-group">
+							<span class="setting-label">Maximized viewer background</span>
+							<p class="section-desc">
+								The viewer is always one flat colour. A checkerboard tells transparency
+								apart in a thumbnail the size of a stamp; across a whole window it is
+								noise over the picture you opened it to look at.
+							</p>
+							<label class="color-row">
+								<input
+									type="color"
+									class="color-input"
+									value={viewerBgColor}
+									oninput={(e) => setViewerBgColor(e.currentTarget.value)}
+								/>
+								<span class="color-text">
+									Viewer colour
+									<span class="color-hint">{viewerColor()}</span>
+								</span>
+							</label>
 						</div>
 					</div>
 				{:else if activeCategory === 'actions'}
@@ -586,6 +631,37 @@
 		color: var(--color-text-primary);
 		display: block;
 		margin-bottom: 2px;
+	}
+
+	.color-row {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-top: 10px;
+		cursor: pointer;
+	}
+
+	.color-input {
+		width: 36px;
+		height: 26px;
+		padding: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		background: none;
+		cursor: pointer;
+	}
+
+	.color-text {
+		display: flex;
+		flex-direction: column;
+		font-size: 12px;
+		color: var(--color-text-primary);
+	}
+
+	.color-hint {
+		font-size: 10px;
+		color: var(--color-text-muted);
+		font-family: var(--font-mono);
 	}
 
 	.bg-options {

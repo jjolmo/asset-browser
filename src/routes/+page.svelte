@@ -6,8 +6,10 @@
 	import ImagePreview from '$lib/components/ImagePreview.svelte';
 	import SettingsPanel from '$lib/components/SettingsPanel.svelte';
 	import SelectionPanel from '$lib/components/SelectionPanel.svelte';
+	import ImageViewer from '$lib/components/ImageViewer.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { selectionStore } from '$lib/stores/selection.svelte';
+	import { viewerStore } from '$lib/stores/viewer.svelte';
 
 	let sidebarWidth = $state(240);
 	let previewWidth = $state(280);
@@ -209,6 +211,10 @@
 		{/if}
 	</div>
 </div>
+
+{#if viewerStore.isOpen}
+	<ImageViewer />
+{/if}
 
 {#if showSettings}
 	<SettingsPanel onclose={() => showSettings = false} />

@@ -3,6 +3,8 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { libraryStore } from '$lib/stores/library.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
+	import { fullImage } from '$lib/fullImage';
+	import { previewBackground } from '$lib/backgrounds';
 
 	// The settings cache is reactive, so this needs no local copy to stay in sync.
 	let metaCollapsed = $derived(settingsStore.getSetting('meta_collapsed') === '1');
@@ -24,18 +26,7 @@
 	let panStart = { x: 0, y: 0 };
 	let imageContainer = $state<HTMLDivElement>(null!);
 
-	let transparencyBg = $derived(settingsStore.getSetting('transparency_bg') || 'checkerboard');
-
-	let bgStyle = $derived.by(() => {
-		switch (transparencyBg) {
-			case 'black': return 'background-color: #000000;';
-			case 'white': return 'background-color: #ffffff;';
-			case 'dark': return 'background-color: #1a1a1a;';
-			case 'checkerboard':
-			default:
-				return `background-color: #1a1a1a; background-image: linear-gradient(45deg, #2a2a2a 25%, transparent 25%), linear-gradient(-45deg, #2a2a2a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2a2a2a 75%), linear-gradient(-45deg, transparent 75%, #2a2a2a 75%); background-size: 16px 16px; background-position: 0 0, 0 8px, 8px -8px, -8px 0px;`;
-		}
-	});
+	let bgStyle = $derived(previewBackground(16));
 
 	$effect(() => {
 		const image = libraryStore.selectedImage;
@@ -55,7 +46,7 @@
 		panY = 0;
 
 		Promise.all([
-			invoke<string>('get_image_base64', { path: image.path }),
+			fullImage(image.path),
 			invoke<[number, number]>('get_image_dimensions', { path: image.path }),
 		])
 			.then(([src, [w, h]]) => {
