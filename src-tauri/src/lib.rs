@@ -703,6 +703,210 @@ fn create_desktop_entry(app_handle: tauri::AppHandle) -> Result<String, String> 
     }
 }
 
+// ── Selection transfer ─────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TransferFailure {
+    pub path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct TransferReport {
+    pub succeeded: usize,
+    pub failures: Vec<TransferFailure>,
+}
+
+/// A path inside `dest_dir` that nothing occupies yet.
+///
+/// Overwriting is never the right default for files the user hand-picked, so a
+/// clash gets a " (1)" suffix the way a file manager does.
+fn unique_destination(dest_dir: &Path, file_name: &std::ffi::OsStr) -> PathBuf {
+    let direct = dest_dir.join(file_name);
+    if !direct.exists() {
+        return direct;
+    }
+
+    let name = Path::new(file_name);
+    let stem = name
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let extension = name.extension().map(|e| e.to_string_lossy().to_string());
+
+    for n in 1..10_000 {
+        let candidate = dest_dir.join(match &extension {
+            Some(ext) => format!("{stem} ({n}).{ext}"),
+            None => format!("{stem} ({n})"),
+        });
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    direct
+}
+
+/// True when `path` already sits directly in `dest`, so a move would be a no-op.
+fn already_in(path: &Path, dest: &Path) -> bool {
+    match path.parent() {
+        Some(parent) => {
+            let a = fs::canonicalize(parent);
+            let b = fs::canonicalize(dest);
+            match (a, b) {
+                (Ok(a), Ok(b)) => a == b,
+                _ => parent == dest,
+            }
+        }
+        None => false,
+    }
+}
+
+#[tauri::command]
+fn transfer_files(
+    paths: Vec<String>,
+    dest_dir: String,
+    move_files: bool,
+) -> Result<TransferReport, String> {
+    let dest = PathBuf::from(&dest_dir);
+    if !dest.is_dir() {
+        return Err(format!("{dest_dir} is not a folder"));
+    }
+
+    let mut report = TransferReport::default();
+    for path in paths {
+        let src = PathBuf::from(&path);
+        let Some(file_name) = src.file_name() else {
+            report.failures.push(TransferFailure {
+                path,
+                error: "path has no file name".to_string(),
+            });
+            continue;
+        };
+
+        // Moving a file into the folder it already lives in would rename it to
+        // "name (1)" for no reason, so it counts as done and is left alone.
+        if move_files && already_in(&src, &dest) {
+            report.succeeded += 1;
+            continue;
+        }
+
+        let target = unique_destination(&dest, file_name);
+        let result = if move_files {
+            // `rename` only works within one filesystem; the copy-then-delete
+            // fallback is what makes a move to another disk work at all.
+            fs::rename(&src, &target).or_else(|_| {
+                fs::copy(&src, &target)
+                    .and_then(|_| fs::remove_file(&src))
+                    .map(|_| ())
+            })
+        } else {
+            fs::copy(&src, &target).map(|_| ())
+        };
+
+        match result {
+            Ok(()) => report.succeeded += 1,
+            Err(e) => report.failures.push(TransferFailure {
+                path,
+                error: e.to_string(),
+            }),
+        }
+    }
+
+    Ok(report)
+}
+
+/// Percent-encodes a filesystem path into the body of a `file://` URI.
+#[cfg(target_os = "linux")]
+fn encode_uri_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for byte in path.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(*byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+/// The target file managers read to tell a copy from a cut.
+#[cfg(target_os = "linux")]
+const GNOME_COPIED_FILES: &str = "x-special/gnome-copied-files";
+
+/// Puts files on the clipboard so a file manager pastes the files themselves,
+/// not their paths as text.
+///
+/// This is served, not stored: the selection lives with whoever owns it, so the
+/// app answers the paste request while it is running. Three targets go out —
+/// the GNOME one Nautilus/Nemo/Thunar prefer, the generic `text/uri-list`, and
+/// plain text as a last resort for editors and terminals.
+#[tauri::command]
+fn copy_files_to_clipboard(paths: Vec<String>, app: tauri::AppHandle) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("nothing to copy".to_string());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let uris: Vec<String> = paths
+            .iter()
+            .map(|p| format!("file://{}", encode_uri_path(p)))
+            .collect();
+        let text = paths.join("\n");
+
+        // GTK is main-thread only, and a command runs off it.
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let outcome = (|| -> Result<(), String> {
+                let display = gtk::gdk::Display::default().ok_or("no display")?;
+                let clipboard = gtk::Clipboard::default(&display).ok_or("no clipboard")?;
+                let targets = [
+                    gtk::TargetEntry::new(GNOME_COPIED_FILES, gtk::TargetFlags::empty(), 0),
+                    gtk::TargetEntry::new("text/uri-list", gtk::TargetFlags::empty(), 1),
+                    gtk::TargetEntry::new("UTF8_STRING", gtk::TargetFlags::empty(), 2),
+                ];
+
+                let accepted = clipboard.set_with_data(&targets, move |_, selection, info| {
+                    match info {
+                        0 => {
+                            let payload = format!("copy\n{}", uris.join("\n"));
+                            selection.set(
+                                &gtk::gdk::Atom::intern(GNOME_COPIED_FILES),
+                                8,
+                                payload.as_bytes(),
+                            );
+                        }
+                        1 => {
+                            let refs: Vec<&str> = uris.iter().map(|s| s.as_str()).collect();
+                            selection.set_uris(&refs);
+                        }
+                        _ => {
+                            selection.set_text(&text);
+                        }
+                    }
+                });
+
+                if accepted {
+                    Ok(())
+                } else {
+                    Err("the clipboard refused the file list".to_string())
+                }
+            })();
+            let _ = tx.send(outcome);
+        })
+        .map_err(|e| e.to_string())?;
+
+        return rx.recv().map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Err("copying files to the clipboard is only implemented on Linux".to_string())
+    }
+}
+
 // ── App Setup ──────────────────────────────────────────────────────────
 
 pub fn run() {
@@ -713,6 +917,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_drag::init())
         .manage(state)
         // Thumbnails are served as ordinary HTTP responses instead of being
         // pushed through the IPC bridge as base64 data URIs. The webview then
@@ -771,6 +976,8 @@ pub fn run() {
             get_image_dimensions,
             open_containing_folder,
             run_custom_command,
+            transfer_files,
+            copy_files_to_clipboard,
             create_desktop_entry,
             check_for_updates,
             apply_update,
@@ -789,4 +996,132 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("asset-browser-test-{name}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write(path: &Path, contents: &str) {
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn unique_destination_suffixes_a_clash() {
+        let dir = temp_dir("unique");
+        write(&dir.join("a.png"), "one");
+
+        assert_eq!(
+            unique_destination(&dir, OsStr::new("b.png")),
+            dir.join("b.png")
+        );
+        assert_eq!(
+            unique_destination(&dir, OsStr::new("a.png")),
+            dir.join("a (1).png")
+        );
+
+        write(&dir.join("a (1).png"), "two");
+        assert_eq!(
+            unique_destination(&dir, OsStr::new("a.png")),
+            dir.join("a (2).png")
+        );
+    }
+
+    #[test]
+    fn copy_leaves_the_originals_alone() {
+        let src = temp_dir("copy-src");
+        let dest = temp_dir("copy-dest");
+        write(&src.join("a.png"), "one");
+        write(&dest.join("a.png"), "other");
+
+        let report = transfer_files(
+            vec![src.join("a.png").to_string_lossy().to_string()],
+            dest.to_string_lossy().to_string(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(report.succeeded, 1);
+        assert!(report.failures.is_empty());
+        assert!(src.join("a.png").exists());
+        // The file already there keeps its contents; the copy lands beside it.
+        assert_eq!(fs::read_to_string(dest.join("a.png")).unwrap(), "other");
+        assert_eq!(fs::read_to_string(dest.join("a (1).png")).unwrap(), "one");
+    }
+
+    #[test]
+    fn move_takes_the_original_with_it() {
+        let src = temp_dir("move-src");
+        let dest = temp_dir("move-dest");
+        write(&src.join("a.png"), "one");
+
+        let report = transfer_files(
+            vec![src.join("a.png").to_string_lossy().to_string()],
+            dest.to_string_lossy().to_string(),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(report.succeeded, 1);
+        assert!(!src.join("a.png").exists());
+        assert_eq!(fs::read_to_string(dest.join("a.png")).unwrap(), "one");
+    }
+
+    #[test]
+    fn move_into_its_own_folder_is_a_no_op() {
+        let dir = temp_dir("move-self");
+        write(&dir.join("a.png"), "one");
+
+        let report = transfer_files(
+            vec![dir.join("a.png").to_string_lossy().to_string()],
+            dir.to_string_lossy().to_string(),
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(report.succeeded, 1);
+        assert_eq!(fs::read_to_string(dir.join("a.png")).unwrap(), "one");
+        assert!(!dir.join("a (1).png").exists());
+    }
+
+    #[test]
+    fn a_missing_file_is_reported_without_stopping_the_rest() {
+        let src = temp_dir("partial-src");
+        let dest = temp_dir("partial-dest");
+        write(&src.join("a.png"), "one");
+
+        let report = transfer_files(
+            vec![
+                src.join("gone.png").to_string_lossy().to_string(),
+                src.join("a.png").to_string_lossy().to_string(),
+            ],
+            dest.to_string_lossy().to_string(),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(report.succeeded, 1);
+        assert_eq!(report.failures.len(), 1);
+        assert!(report.failures[0].path.ends_with("gone.png"));
+        assert!(dest.join("a.png").exists());
+    }
+
+    #[test]
+    fn a_missing_destination_is_refused() {
+        let dir = temp_dir("no-dest");
+        assert!(transfer_files(
+            vec![dir.join("a.png").to_string_lossy().to_string()],
+            dir.join("nope").to_string_lossy().to_string(),
+            false,
+        )
+        .is_err());
+    }
 }

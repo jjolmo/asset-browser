@@ -1,6 +1,6 @@
 [package]
 name = "asset-browser"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2021"
 description = "Recursive asset browser with smart folder organization"
 
@@ -24,6 +24,12 @@ uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 rayon = "1.10"
 ureq = "2"
+tauri-plugin-drag = "2"
+
+# GTK is already in the tree through tao; taking it directly is what lets the
+# clipboard hand out real file URIs instead of a list of paths as text.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
 
 # Dependencies are built optimized even in dev builds. Thumbnail generation goes
 # through the `image` crate, and unoptimized it decodes a typical photo ~15x

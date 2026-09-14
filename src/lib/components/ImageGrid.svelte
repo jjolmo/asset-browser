@@ -4,6 +4,8 @@
 	import { libraryStore } from '$lib/stores/library.svelte';
 	import { settingsStore } from '$lib/stores/settings.svelte';
 	import { customActionsStore } from '$lib/stores/customActions.svelte';
+	import { selectionStore } from '$lib/stores/selection.svelte';
+	import { dragLabel, startFileDrag } from '$lib/dragOut';
 	import { thumbUrl } from '$lib/thumbUrl';
 	import SearchBar from './SearchBar.svelte';
 	import type { ImageEntry, SortBy, ViewMode } from '$lib/types';
@@ -121,8 +123,35 @@
 		node.addEventListener('error', () => settle(false), { once: true });
 	}
 
-	function handleImageClick(image: ImageEntry) {
+	function handleImageClick(e: MouseEvent, image: ImageEntry) {
+		if (e.ctrlKey || e.metaKey) {
+			// The first ctrl+click grows the pile out of whatever was already
+			// showing, which is how the gesture reads: pick one, then keep adding.
+			const current = libraryStore.selectedImage;
+			if (selectionStore.count === 0 && current && current.path !== image.path) {
+				selectionStore.add(current);
+			}
+			selectionStore.toggle(image);
+		}
 		libraryStore.selectImage(image);
+	}
+
+	/**
+	 * Hands the drag over to the desktop, so a drop on a file manager copies
+	 * the files. Dragging a cell that is part of the pile drags the whole pile;
+	 * dragging any other cell drags just that one, without touching the pile.
+	 */
+	function handleDragStart(e: DragEvent, image: ImageEntry) {
+		e.preventDefault();
+		const paths = selectionStore.has(image.path) ? selectionStore.paths : [image.path];
+		startFileDrag(paths, paths.length === 1 ? image.name : dragLabel(paths.length)).catch(
+			console.error
+		);
+	}
+
+	function toggleInSelection(image: ImageEntry) {
+		selectionStore.toggle(image);
+		closeContextMenu();
 	}
 
 	function formatSize(bytes: number): string {
@@ -566,9 +595,19 @@
 						<button
 							class="grid-cell"
 							class:selected={libraryStore.selectedImage?.path === image.path}
-							onclick={() => handleImageClick(image)}
+							class:picked={selectionStore.has(image.path)}
+							draggable="true"
+							ondragstart={(e) => handleDragStart(e, image)}
+							onclick={(e) => handleImageClick(e, image)}
 							oncontextmenu={(e) => handleContextMenu(e, image)}
 						>
+							{#if selectionStore.has(image.path)}
+								<span class="pick-badge">
+									<svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+										<path d="M6.5 12.5L2 8l1.4-1.4 3.1 3.1 6.1-6.1L14 5l-7.5 7.5z"/>
+									</svg>
+								</span>
+							{/if}
 							{#if ctrlDown || libraryStore.isFileFavorite(image.path)}
 								<!-- svelte-ignore a11y_click_events_have_key_events -->
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -589,6 +628,7 @@
 									<img
 										src={'asset://localhost/' + image.path}
 										alt={image.name}
+										draggable="false"
 									/>
 								{:else}
 									<div class="thumb-placeholder">
@@ -600,6 +640,7 @@
 										src={thumbUrl(image)}
 										alt={image.name}
 										decoding="async"
+										draggable="false"
 										use:thumbState
 									/>
 								{/if}
@@ -620,7 +661,10 @@
 						<button
 							class="list-row"
 							class:selected={libraryStore.selectedImage?.path === image.path}
-							onclick={() => handleImageClick(image)}
+							class:picked={selectionStore.has(image.path)}
+							draggable="true"
+							ondragstart={(e) => handleDragStart(e, image)}
+							onclick={(e) => handleImageClick(e, image)}
 							oncontextmenu={(e) => handleContextMenu(e, image)}
 						>
 							{#if ctrlDown || libraryStore.isFileFavorite(image.path)}
@@ -640,7 +684,7 @@
 							{/if}
 							<span class="list-col-thumb">
 								{#if image.extension === 'svg'}
-									<img src={'asset://localhost/' + image.path} alt="" class="list-thumb-img" />
+									<img src={'asset://localhost/' + image.path} alt="" class="list-thumb-img" draggable="false" />
 								{:else}
 									<span class="list-ext-icon thumb-placeholder">.{image.extension}</span>
 									<span class="thumb-spinner list-spinner"></span>
@@ -649,6 +693,7 @@
 										alt=""
 										class="list-thumb-img thumb-img"
 										decoding="async"
+										draggable="false"
 										use:thumbState
 									/>
 								{/if}
@@ -676,6 +721,12 @@
 					<path d="M8 1l2.163 4.382 4.837.703-3.5 3.412.827 4.823L8 12.027l-4.327 2.293.827-4.823L1 5.085l4.837-.703L8 1z"/>
 				</svg>
 				{libraryStore.isFileFavorite(contextMenu!.image.path) ? 'Remove from favorites' : 'Add to favorites'}
+			</button>
+			<button class="context-item" onclick={() => toggleInSelection(contextMenu!.image)}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+					<path d="M6.5 12.5L2 8l1.4-1.4 3.1 3.1 6.1-6.1L14 5l-7.5 7.5z"/>
+				</svg>
+				{selectionStore.has(contextMenu!.image.path) ? 'Remove from selection' : 'Add to selection'}
 			</button>
 			<div class="context-separator"></div>
 			<button class="context-item" onclick={() => openContainingFolder(contextMenu!.image.path)}>
@@ -877,6 +928,29 @@
 		background-color: var(--color-bg-selected);
 	}
 
+	/* Being in the pile is a different thing from being previewed, so it reads
+	   differently: a dashed edge and a corner tick, both of which survive the
+	   solid border a cell gets while it is the one on show. */
+	.grid-cell.picked {
+		border-color: #4ec9b0;
+		border-style: dashed;
+	}
+
+	.pick-badge {
+		position: absolute;
+		top: 6px;
+		left: 6px;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		height: 16px;
+		border-radius: 3px;
+		background-color: #4ec9b0;
+		color: #1e1e1e;
+	}
+
 	.cell-thumb {
 		position: relative;
 		width: 100%;
@@ -959,6 +1033,10 @@
 
 	.list-row.selected {
 		background-color: var(--color-bg-selected);
+	}
+
+	.list-row.picked {
+		box-shadow: inset 2px 0 0 #4ec9b0;
 	}
 
 	.list-col-thumb {
