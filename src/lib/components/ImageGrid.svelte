@@ -149,6 +149,38 @@
 		);
 	}
 
+	/**
+	 * Ctrl+C copies the pile if there is one, and otherwise the image on show.
+	 * The pile wins because building it is the deliberate act: once files have
+	 * been gathered, copying only the previewed one would quietly ignore them.
+	 */
+	function copySelectionToClipboard() {
+		const paths = selectionStore.count > 0
+			? selectionStore.paths
+			: libraryStore.selectedImage
+				? [libraryStore.selectedImage.path]
+				: [];
+		if (paths.length === 0) return;
+
+		copyFeedback = null;
+		invoke('copy_files_to_clipboard', { paths })
+			.then(() => {
+				copyFeedback = `Copied ${paths.length} file${paths.length === 1 ? '' : 's'}`;
+			})
+			.catch((e) => {
+				copyFeedback = `Copy failed: ${e}`;
+			})
+			.finally(() => {
+				clearTimeout(copyFeedbackTimer);
+				copyFeedbackTimer = window.setTimeout(() => (copyFeedback = null), 2000);
+			});
+	}
+
+	// Ctrl+C gives nothing away on its own, so it says so briefly. The panel has
+	// its own status line; the grid has nowhere else to put this.
+	let copyFeedback = $state<string | null>(null);
+	let copyFeedbackTimer = 0;
+
 	function toggleInSelection(image: ImageEntry) {
 		selectionStore.toggle(image);
 		closeContextMenu();
@@ -209,6 +241,14 @@
 
 	function onKeyDown(e: KeyboardEvent) {
 		if (e.key === 'Control') ctrlDown = true;
+
+		// Ctrl+C before the arrow keys below, which bail out on any modifier.
+		if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+			if (isTypingTarget(e.target)) return;
+			e.preventDefault();
+			copySelectionToClipboard();
+			return;
+		}
 
 		const handled =
 			e.key === 'ArrowLeft' ||
@@ -710,6 +750,10 @@
 	</div>
 </div>
 
+{#if copyFeedback}
+	<div class="copy-toast">{copyFeedback}</div>
+{/if}
+
 <!-- Context menu -->
 {#if contextMenu}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -751,6 +795,22 @@
 {/if}
 
 <style>
+	.copy-toast {
+		position: fixed;
+		bottom: 16px;
+		left: 50%;
+		transform: translateX(-50%);
+		z-index: 300;
+		padding: 6px 14px;
+		border-radius: 4px;
+		border: 1px solid var(--color-border);
+		background-color: var(--color-bg-tertiary);
+		color: var(--color-text-primary);
+		font-size: 12px;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+		pointer-events: none;
+	}
+
 	.image-grid-container {
 		display: flex;
 		flex-direction: column;
