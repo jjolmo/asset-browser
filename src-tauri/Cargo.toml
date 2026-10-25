@@ -1,6 +1,6 @@
 [package]
 name = "asset-browser"
-version = "0.17.0"
+version = "0.18.0"
 edition = "2021"
 description = "Recursive asset browser with smart folder organization"
 
@@ -30,6 +30,11 @@ tauri-plugin-drag = "2"
 # clipboard hand out real file URIs instead of a list of paths as text.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
+
+# drag 2.1.1 patched: it unhooked drag-data-get before X11 receivers asked for the URIs,
+# so drops on Aseprite, Godot... got nothing. It also sent unencoded URIs.
+[patch.crates-io]
+drag = { path = "patches/drag" }
 
 # Dependencies are built optimized even in dev builds. Thumbnail generation goes
 # through the `image` crate, and unoptimized it decodes a typical photo ~15x

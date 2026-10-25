@@ -1,0 +1,75 @@
+#!/bin/sh
+# Opens files in the running Aseprite via the open-in-running extension, or starts one.
+# ASEPRITE overrides the binary found on PATH.
+
+ASEPRITE="${ASEPRITE:-$(command -v aseprite)}"
+INBOX="${XDG_CONFIG_HOME:-$HOME/.config}/aseprite/inbox"
+EXTENSION="${XDG_CONFIG_HOME:-$HOME/.config}/aseprite/extensions/open-in-running"
+
+if [ -z "$ASEPRITE" ]; then
+	echo "aseprite-open: aseprite not found; set ASEPRITE" >&2
+	exit 1
+fi
+
+# Matched on the executable, since Aseprite renames its main thread to "main".
+# Instances started before the extension was installed never read the inbox.
+aseprite_running() {
+	target=$(readlink -f -- "$ASEPRITE")
+	installed=$(stat -c %Y -- "$EXTENSION/package.json") || return 1
+	boot=$(awk '/^btime/ {print $2}' /proc/stat)
+	ticks=$(getconf CLK_TCK)
+	for proc in /proc/[0-9]*; do
+		[ "$(readlink -- "$proc/exe" 2>/dev/null)" = "$target" ] || continue
+		# Start time is field 22, counted after ") " because the name may hold spaces.
+		started=$(sed 's/.*) //' "$proc/stat" 2>/dev/null | awk -v b="$boot" -v t="$ticks" '{print int(b + $20 / t)}')
+		[ -n "$started" ] && [ "$started" -ge "$installed" ] && return 0
+	done
+	return 1
+}
+
+raise_aseprite() {
+	if command -v qdbus >/dev/null 2>&1 && qdbus org.kde.KWin /Scripting >/dev/null 2>&1; then
+		# KWin ignores activation requests from other clients, but its scripts may activate any window.
+		script=$(mktemp --suffix=.js)
+		cat >"$script" <<-'EOF'
+			const windows = workspace.windowList ? workspace.windowList() : workspace.clientList();
+			for (const w of windows) {
+				if (String(w.resourceClass).toLowerCase() === "aseprite") {
+					if (w.minimized) w.minimized = false;
+					workspace.activeWindow = w;
+				}
+			}
+		EOF
+		name="aseprite-open-$$"
+		id=$(qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.loadScript "$script" "$name")
+		qdbus org.kde.KWin "/Scripting/Script$id" org.kde.kwin.Script.run >/dev/null 2>&1
+		qdbus org.kde.KWin /Scripting org.kde.kwin.Scripting.unloadScript "$name" >/dev/null 2>&1
+		rm -f "$script"
+	elif command -v xdotool >/dev/null 2>&1; then
+		xdotool search --class Aseprite windowactivate >/dev/null 2>&1
+	fi
+}
+
+if [ $# -eq 0 ] || [ ! -d "$EXTENSION" ] || ! aseprite_running; then
+	exec "$ASEPRITE" "$@"
+fi
+
+mkdir -p "$INBOX" || exec "$ASEPRITE" "$@"
+# Requests nobody picked up within a minute are dead.
+find "$INBOX" -mindepth 1 -maxdepth 1 -mmin +1 -exec rm -rf {} +
+
+n=0
+for file in "$@"; do
+	n=$((n + 1))
+	path=$(realpath -s -- "$file")
+	name="$(date +%s%3N)-$$-$n"
+	# Staged under a dot name so the extension never sees half a request.
+	staging="$INBOX/.$name"
+	mkdir -p "$staging$(dirname -- "$path")" &&
+		: >"$staging$path" &&
+		mv "$staging" "$INBOX/$name"
+done
+
+raise_aseprite
+
+exit 0

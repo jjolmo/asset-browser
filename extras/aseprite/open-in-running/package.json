@@ -1,0 +1,12 @@
+{
+  "name": "open-in-running",
+  "displayName": "Open in running Aseprite",
+  "description": "Opens the files sent by aseprite-open in this window instead of starting a second Aseprite.",
+  "version": "1.0.0",
+  "author": { "name": "cidwel" },
+  "contributes": {
+    "scripts": [
+      { "path": "./open-in-running.lua" }
+    ]
+  }
+}
